@@ -1,0 +1,1018 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\title{A 90-Day Curriculum for AI/LLM PhD Preparation}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Course Overview}
+
+This 90-day curriculum is designed for students preparing to enter a Computer Science PhD program in AI, large language models, vision-language models, reinforcement learning, world models, and multimodal reasoning. The curriculum follows the historical development of modern foundation models while emphasizing engineering practice, experimental design, pretraining experience, reinforcement learning foundations, world model research, scalable inference, and research-oriented implementation.
+
+\section*{Learning Goals}
+
+By the end of this curriculum, the student should be able to:
+
+\begin{itemize}
+    \item Understand the architectural evolution from Transformer to modern LLMs and VLMs.
+    \item Implement and train a decoder-only Transformer from scratch.
+    \item Understand tokenizer internals and their impact on efficiency, multilinguality, code, math, and reasoning.
+    \item Build an end-to-end causal language model pretraining pipeline.
+    \item Pretrain a 300M-scale language model from scratch under a realistic token budget.
+    \item Fine-tune and preference-optimize 1B--3B models.
+    \item Understand instruction tuning, DPO, RLHF, RLVR, GRPO, and verifiable reward.
+    \item Implement core reinforcement learning algorithms from tabular methods to PPO.
+    \item Understand exploration, intrinsic reward, curiosity, RND, and information-gain-style methods.
+    \item Implement toy world models and model-based agents.
+    \item Understand Dreamer-style, JEPA-style, transformer-based, diffusion-based, and MPC-style world models.
+    \item Build retrieval systems and distinguish naive RAG from agentic retrieval.
+    \item Deploy models for scalable evaluation using inference engines such as vLLM or SGLang.
+    \item Understand long-context methods and their limitations.
+    \item Analyze VLM hallucination, grounding failures, and intervention methods.
+    \item Apply mechanistic intervention and representation engineering methods where appropriate.
+    \item Produce a capstone research report with baselines, ablations, error analysis, and limitations.
+\end{itemize}
+
+\section*{Course Structure}
+
+\begin{itemize}
+    \item \textbf{Part I: Transformer Foundations and Tokenization} \hfill Days 1--14
+    \item \textbf{Part II: Pretraining and Scaling} \hfill Days 15--30
+    \item \textbf{Part III: Post-training, Preference Optimization, and Reasoning RL} \hfill Days 31--44
+    \item \textbf{Part IV: Reinforcement Learning Foundations and Exploration} \hfill Days 45--58
+    \item \textbf{Part V: World Models and Model-Based Agents} \hfill Days 59--72
+    \item \textbf{Part VI: VLMs, Serving, Long Context, and Intervention} \hfill Days 73--84
+    \item \textbf{Part VII: Research Capstone Extension} \hfill Days 85--90
+\end{itemize}
+
+\section*{Chapter Format}
+
+Each chapter should follow the same structure:
+
+\begin{itemize}
+    \item Historical motivation
+    \item Core architecture or algorithm
+    \item Key implementation details
+    \item Important failure modes
+    \item Minimal coding exercise
+    \item Optional 1B--3B scale extension
+    \item Research memo prompt
+\end{itemize}
+
+\section{Part I: Transformer Foundations and Tokenization}
+
+\subsection{Chapter 1: Before Transformer}
+
+\begin{itemize}
+    \item N-gram language models
+    \item Word2Vec and GloVe
+    \item RNN, LSTM, and GRU
+    \item Seq2Seq models
+    \item Early attention mechanisms
+    \item Teacher forcing
+    \item Autoregressive generation before Transformers
+    \item Limitations of recurrent architectures
+    \item Why parallel sequence modeling matters
+    \item Coding exercise: implement a toy character-level autoregressive text generator
+    \item Research memo: why did Transformer replace RNNs for large-scale language modeling?
+\end{itemize}
+
+\subsection{Chapter 2: Attention Is All You Need}
+
+\begin{itemize}
+    \item Transformer encoder-decoder architecture
+    \item Scaled dot-product attention
+    \item Query, key, and value projections
+    \item Multi-head attention
+    \item Positional encoding
+    \item Feed-forward networks
+    \item Residual connections
+    \item LayerNorm
+    \item Padding masks
+    \item Causal masks
+    \item Attention complexity
+    \item Why self-attention is parallelizable
+    \item Coding exercise: implement scaled dot-product attention from scratch
+    \item Coding exercise: implement multi-head attention from scratch
+    \item Coding exercise: unit test attention masks and tensor shapes
+    \item Research memo: what problem does self-attention solve that RNNs struggled with?
+\end{itemize}
+
+\subsection{Chapter 3: Decoder-only Transformer}
+
+\begin{itemize}
+    \item GPT-style architecture
+    \item Token embeddings
+    \item Positional embeddings
+    \item Causal self-attention
+    \item Transformer block
+    \item Language modeling head
+    \item Autoregressive generation
+    \item Greedy decoding
+    \item Sampling-based decoding
+    \item Logits, probabilities, and next-token prediction
+    \item Coding exercise: implement a mini-GPT model
+    \item Coding exercise: implement an autoregressive generation loop
+    \item Coding exercise: compare greedy decoding and sampling
+    \item Research memo: why did decoder-only Transformers become the dominant LLM architecture?
+\end{itemize}
+
+\subsection{Chapter 4: Training Loop Engineering}
+
+\begin{itemize}
+    \item Dataset and DataLoader
+    \item Collators
+    \item Training loop
+    \item Validation loop
+    \item Gradient accumulation
+    \item Mixed precision training
+    \item Optimizer setup
+    \item Learning rate scheduler
+    \item Checkpointing
+    \item Resume from checkpoint
+    \item Logging and reproducibility
+    \item Random seed control
+    \item Experiment directory structure
+    \item Saving configurations, metrics, samples, and checkpoints
+    \item Coding exercise: build a reproducible mini-GPT training pipeline
+    \item Coding exercise: add checkpoint resume and validation perplexity
+    \item Research memo: what makes a training pipeline reproducible?
+\end{itemize}
+
+\subsection{Chapter 5: Tokenization and Text Representation}
+
+\begin{itemize}
+    \item Word-level tokenization
+    \item Character-level tokenization
+    \item Subword tokenization
+    \item Byte Pair Encoding
+    \item WordPiece
+    \item SentencePiece
+    \item Byte-level BPE
+    \item BPE dropout
+    \item Vocabulary size and tokenization efficiency
+    \item Special tokens
+    \item Padding tokens
+    \item BOS and EOS tokens
+    \item Chat templates
+    \item Tokenizer-model compatibility
+    \item Tokenizer effects on context length
+    \item Tokenizer effects on inference cost
+    \item Tokenizer effects on multilingual ability
+    \item Tokenization artifacts in Chinese
+    \item Tokenization artifacts in code
+    \item Tokenization artifacts in math
+    \item Tokenization artifacts in numbers
+    \item Tokenization for low-resource languages
+    \item Coding exercise: train a small BPE tokenizer
+    \item Coding exercise: train a small SentencePiece tokenizer
+    \item Coding exercise: compare token counts across English, Chinese, code, math, and numerical text
+    \item Research memo: how can tokenizer design influence reasoning and multilingual performance?
+\end{itemize}
+
+\subsection{Project 1: Train a MiniGPT from Scratch}
+
+\begin{itemize}
+    \item Implement a small decoder-only Transformer.
+    \item Train on a small text corpus.
+    \item Implement autoregressive generation.
+    \item Add checkpointing, logging, validation, and resume.
+    \item Run ablations on depth, context length, and positional embeddings.
+    \item Analyze tokenizer choice on a small corpus.
+    \item Produce loss curves and generated samples.
+    \item Produce a short report on architecture, training stability, and tokenizer effects.
+\end{itemize}
+
+\section{Part II: Pretraining and Scaling}
+
+\subsection{Chapter 6: Compressed BERT and Encoder-only Pretraining}
+
+\begin{itemize}
+    \item Encoder-only Transformer
+    \item Bidirectional attention
+    \item Masked language modeling
+    \item \texttt{[CLS]} token
+    \item Classification heads
+    \item Next sentence prediction as historical context
+    \item BERT vs. GPT
+    \item When encoder-only models are still useful
+    \item Representation learning with encoder-only models
+    \item Coding exercise: fine-tune BERT for text classification
+    \item Coding exercise: compare frozen encoder vs. full fine-tuning
+    \item Research memo: why is BERT strong for understanding tasks but weak for open-ended generation?
+\end{itemize}
+
+\subsection{Chapter 7: GPT and Causal Language Modeling}
+
+\begin{itemize}
+    \item Decoder-only pretraining
+    \item Causal language modeling
+    \item Next-token prediction
+    \item Autoregressive generation
+    \item Prompt-based task adaptation
+    \item Pretraining and supervised adaptation
+    \item GPT vs. BERT
+    \item Tokenizer-model interaction
+    \item Coding exercise: compare BERT classification with GPT prompt-based classification
+    \item Coding exercise: implement prompt-based classification with a causal LM
+    \item Research memo: why can next-token prediction produce general language ability?
+\end{itemize}
+
+\subsection{Chapter 8: GPT-2 and Zero-shot Prompting}
+
+\begin{itemize}
+    \item Web-scale language modeling
+    \item WebText
+    \item Zero-shot transfer
+    \item Prompt as task specification
+    \item Unsupervised multitask learning
+    \item Decoding strategies
+    \item Greedy decoding
+    \item Top-$k$ sampling
+    \item Top-$p$ sampling
+    \item Temperature sampling
+    \item Prompt sensitivity
+    \item Tokenization effects on prompting and generation
+    \item Coding exercise: evaluate GPT-2-style zero-shot prompting
+    \item Coding exercise: compare greedy, top-$k$, top-$p$, and temperature sampling
+    \item Research memo: why was GPT-2 more than just a larger GPT?
+\end{itemize}
+
+\subsection{Chapter 9: GPT-3 and In-context Learning}
+
+\begin{itemize}
+    \item Scaling up language models
+    \item Few-shot prompting
+    \item In-context learning
+    \item Demonstration selection
+    \item Demonstration order sensitivity
+    \item Prompt format sensitivity
+    \item Scaling and emergent behavior
+    \item In-context learning vs. fine-tuning
+    \item In-context learning vs. retrieval
+    \item Coding exercise: build an in-context learning experiment runner
+    \item Coding exercise: compare zero-shot, one-shot, and few-shot prompting
+    \item Coding exercise: compare random demonstrations and retrieved demonstrations
+    \item Research memo: is in-context learning learning, retrieval, or pattern matching?
+\end{itemize}
+
+\subsection{Chapter 10: Scaling Laws and Pretraining Practice}
+
+\begin{itemize}
+    \item Model scale
+    \item Data scale
+    \item Compute budget
+    \item Token budget
+    \item Tokenizer training and tokenizer selection
+    \item Dataset mixture
+    \item Data cleaning
+    \item Deduplication
+    \item Sequence packing
+    \item Validation perplexity
+    \item Training throughput
+    \item Checkpoint scheduling
+    \item Loss spikes
+    \item Numerical instability
+    \item Undertraining and overtraining
+    \item Compute-optimal training
+    \item Pretraining dry runs
+    \item Coding exercise: pretrain a 30M--100M causal language model for pipeline validation
+    \item Coding exercise: measure training throughput and GPU utilization
+    \item Extension: pretrain a 300M-scale model from scratch
+    \item Research memo: what does a small-scale pretraining run teach us about foundation model construction?
+\end{itemize}
+
+\subsection{Project 2: End-to-End 300M-scale Pretraining Study}
+
+\begin{itemize}
+    \item Implement a complete causal language model pretraining pipeline.
+    \item Run small-scale dry runs with 10M--100M models to validate the pipeline.
+    \item Prepare and clean a text corpus.
+    \item Train or compare tokenizers and analyze tokenization efficiency.
+    \item Pretrain a 300M-scale decoder-only Transformer from scratch.
+    \item Track training loss, validation perplexity, throughput, GPU utilization, GPU memory, and checkpoint behavior.
+    \item Run scaling ablations across model size, context length, tokenizer choice, or data mixture.
+    \item Evaluate generated samples.
+    \item Fine-tune the pretrained model with SFT and compare base vs. SFT behavior.
+    \item Analyze undertraining, data quality, repetition, hallucination, and generation failures.
+    \item Produce a full pretraining report including compute budget, token budget, training curves, ablations, and lessons learned.
+\end{itemize}
+
+\section{Part III: Post-training, Preference Optimization, and Reasoning RL}
+
+\subsection{Chapter 11: Instruction Tuning}
+
+\begin{itemize}
+    \item Base LM vs. assistant model
+    \item Instruction-response datasets
+    \item Chat templates
+    \item Assistant-only loss
+    \item Supervised fine-tuning
+    \item Data formatting
+    \item Dataset validation
+    \item Overfitting in SFT
+    \item Behavior change vs. capability gain
+    \item Multi-turn instruction data
+    \item System prompts and instruction hierarchy
+    \item Coding exercise: full fine-tune or LoRA fine-tune a 1B--3B model
+    \item Coding exercise: compare loss-on-all-tokens vs. assistant-only loss
+    \item Research memo: does SFT improve capability, behavior, or both?
+\end{itemize}
+
+\subsection{Chapter 12: LoRA, QLoRA, and PEFT}
+
+\begin{itemize}
+    \item Full fine-tuning
+    \item Parameter-efficient fine-tuning
+    \item Adapters
+    \item LoRA
+    \item QLoRA
+    \item Target modules
+    \item Rank
+    \item Alpha
+    \item Dropout
+    \item Adapter merging
+    \item Memory footprint
+    \item Quantization-aware fine-tuning
+    \item Coding exercise: LoRA rank ablation
+    \item Coding exercise: target-module ablation
+    \item Coding exercise: merge and unload adapters
+    \item Research memo: when is LoRA sufficient and when is full fine-tuning necessary?
+\end{itemize}
+
+\subsection{Chapter 13: DPO and Preference Optimization}
+
+\begin{itemize}
+    \item Preference datasets
+    \item Chosen and rejected responses
+    \item Direct Preference Optimization
+    \item IPO
+    \item KTO
+    \item ORPO
+    \item Pairwise evaluation
+    \item Preference data quality
+    \item Style preference vs. correctness preference
+    \item Over-optimization
+    \item Reward-model-free alignment
+    \item Coding exercise: train a small DPO model from an SFT checkpoint
+    \item Coding exercise: compare SFT and DPO outputs
+    \item Research memo: why did DPO become a practical alternative to RLHF?
+\end{itemize}
+
+\subsection{Chapter 14: InstructGPT and RLHF}
+
+\begin{itemize}
+    \item InstructGPT pipeline
+    \item Supervised fine-tuning
+    \item Reward modeling
+    \item PPO
+    \item KL penalty
+    \item Reward hacking
+    \item RLHF vs. DPO
+    \item Helpfulness, honesty, and harmlessness
+    \item Alignment tax
+    \item Preference data bias
+    \item PPO implementation pitfalls
+    \item The 37 implementation details of PPO
+    \item Coding exercise: train a toy reward model
+    \item Optional coding exercise: run PPO with TRL on a small preference task
+    \item Alternative exercise: read TRL PPO source code and reproduce a public baseline curve
+    \item Research memo: why is RLHF engineering difficult?
+\end{itemize}
+
+\subsection{Chapter 15: Reasoning RL and Verifiable Reward}
+
+\begin{itemize}
+    \item RLHF vs. RLVR
+    \item Verifiable rewards for math
+    \item Verifiable rewards for code
+    \item Verifiable rewards for structured tasks
+    \item Outcome reward
+    \item Process reward
+    \item Process reward models
+    \item GRPO
+    \item Critic-free policy optimization
+    \item Self-rewarding and bootstrapped reward signals
+    \item Rejection sampling fine-tuning
+    \item Test-time compute scaling
+    \item o1-style reasoning training
+    \item R1-style reasoning training
+    \item Failure modes of reasoning RL
+    \item Reward hacking in verifiable tasks
+    \item Coding exercise: train with verifiable rewards on a toy math or code task
+    \item Coding exercise: compare SFT, DPO, PPO, and GRPO-style training where feasible
+    \item Research memo: why is verifiable reward central to recent reasoning models?
+\end{itemize}
+
+\subsection{Project 3: Build and Align a 3B Assistant}
+
+\begin{itemize}
+    \item Select a 1B--3B base model.
+    \item Apply SFT.
+    \item Apply LoRA or full fine-tuning.
+    \item Apply DPO or toy RLHF.
+    \item Optionally apply verifiable-reward training on a small reasoning task.
+    \item Compare base, SFT, preference-optimized, and reasoning-RL-enhanced models.
+    \item Evaluate instruction following, hallucination, refusal, reasoning, and response quality.
+    \item Produce a model card and evaluation report.
+\end{itemize}
+
+\section{Part IV: Reinforcement Learning Foundations and Exploration}
+
+\subsection{Chapter 16: Markov Decision Processes}
+
+\begin{itemize}
+    \item State
+    \item Action
+    \item Reward
+    \item Transition
+    \item Discount factor
+    \item Policy
+    \item Value function
+    \item Return and trajectory
+    \item Episodic tasks
+    \item Continuing tasks
+    \item Exploration vs. exploitation
+    \item Coding exercise: implement a small GridWorld MDP
+    \item Research memo: how does the MDP formalism differ from supervised learning?
+\end{itemize}
+
+\subsection{Chapter 17: Dynamic Programming for RL}
+
+\begin{itemize}
+    \item Bellman expectation equation
+    \item Bellman optimality equation
+    \item Policy evaluation
+    \item Policy iteration
+    \item Value iteration
+    \item Policy extraction
+    \item Known transition models
+    \item Planning in tabular environments
+    \item Coding exercise: implement value iteration
+    \item Coding exercise: implement policy iteration
+    \item Research memo: why does dynamic programming require a model of the environment?
+\end{itemize}
+
+\subsection{Chapter 18: Model-free RL}
+
+\begin{itemize}
+    \item Monte Carlo learning
+    \item Temporal difference learning
+    \item SARSA
+    \item Q-learning
+    \item Function approximation
+    \item Replay buffer
+    \item Exploration schedules
+    \item Off-policy learning
+    \item On-policy learning
+    \item Coding exercise: implement tabular Q-learning on a toy environment
+    \item Coding exercise: compare SARSA and Q-learning
+    \item Research memo: why is model-free RL often sample inefficient?
+\end{itemize}
+
+\subsection{Chapter 19: Policy Gradient and Actor-Critic}
+
+\begin{itemize}
+    \item Policy gradient
+    \item REINFORCE
+    \item Baseline
+    \item Advantage
+    \item Actor-critic
+    \item Generalized Advantage Estimation
+    \item Entropy regularization
+    \item Bias-variance tradeoff in advantage estimation
+    \item Coding exercise: implement a minimal policy-gradient agent
+    \item Coding exercise: implement an actor-critic agent
+    \item Research memo: why optimize a policy directly instead of learning a Q-function?
+\end{itemize}
+
+\subsection{Chapter 20: PPO Implementation Details}
+
+\begin{itemize}
+    \item PPO objective
+    \item Clipped policy update
+    \item KL control
+    \item Reward shaping
+    \item Rollout collection
+    \item Advantage normalization
+    \item Value loss clipping
+    \item Entropy bonus
+    \item Minibatch updates
+    \item PPO in RLHF
+    \item PPO for tool-using agents
+    \item Stability and sample efficiency
+    \item The 37 implementation details of PPO
+    \item Coding exercise: compare vanilla policy gradient and PPO on a small environment
+    \item Coding exercise: reproduce a stable PPO baseline
+    \item Research memo: why is PPO robust in practice despite being conceptually simple?
+\end{itemize}
+
+\subsection{Chapter 21: Exploration in Reinforcement Learning}
+
+\begin{itemize}
+    \item Exploration vs. exploitation
+    \item Sparse-reward environments
+    \item Count-based exploration
+    \item Pseudo-counts
+    \item Curiosity-driven exploration
+    \item Intrinsic Curiosity Module
+    \item Random Network Distillation
+    \item Information gain
+    \item Empowerment
+    \item Novelty search
+    \item Go-Explore
+    \item Exploration in language agents
+    \item Exploration in visual agents
+    \item Reward hacking under intrinsic reward
+    \item Coding exercise: compare extrinsic reward only vs. intrinsic reward in a sparse-reward environment
+    \item Coding exercise: implement RND or a simplified curiosity module
+    \item Research memo: when does intrinsic reward help, and when does it distract the agent?
+\end{itemize}
+
+\subsection{Project 4: Build a Minimal RL Training Stack}
+
+\begin{itemize}
+    \item Implement a small Gym-style environment.
+    \item Implement value iteration for the tabular version.
+    \item Implement Q-learning.
+    \item Implement policy gradient or PPO.
+    \item Implement a simple intrinsic reward method.
+    \item Compare sample efficiency and stability.
+    \item Compare extrinsic-only and intrinsic-reward-augmented training.
+    \item Produce an RL experiment report.
+\end{itemize}
+
+\section{Part V: World Models and Model-Based Agents}
+
+\subsection{Chapter 22: Model-based Reinforcement Learning}
+
+\begin{itemize}
+    \item Model-free vs. model-based RL
+    \item Learning transition models
+    \item Learning reward models
+    \item Planning with learned models
+    \item Model bias
+    \item Compounding error
+    \item Uncertainty in learned dynamics
+    \item Model predictive control
+    \item Dyna-style learning
+    \item Coding exercise: learn a transition model for a small environment
+    \item Research memo: why can model-based RL be more sample efficient but less stable?
+\end{itemize}
+
+\subsection{Chapter 23: Latent Dynamics Models}
+
+\begin{itemize}
+    \item Observation space vs. latent space
+    \item Encoder
+    \item Latent transition model
+    \item Decoder
+    \item Reconstruction loss
+    \item Prediction loss
+    \item Latent rollout
+    \item Deterministic latent state
+    \item Stochastic latent state
+    \item Belief state
+    \item Coding exercise: train a latent transition model on toy trajectories
+    \item Coding exercise: compare one-step and multi-step prediction error
+    \item Research memo: why learn dynamics in latent space instead of pixel space?
+\end{itemize}
+
+\subsection{Chapter 24: Dreamer-style World Models}
+
+\begin{itemize}
+    \item Recurrent state-space models
+    \item Representation learning
+    \item Reward prediction
+    \item Continuation prediction
+    \item Imagination rollouts
+    \item Actor-critic learning in latent space
+    \item World model pretraining
+    \item Model exploitation
+    \item DreamerV1, DreamerV2, and DreamerV3 as historical progression
+    \item Coding exercise: implement a simplified imagination rollout loop
+    \item Coding exercise: train a policy on imagined latent trajectories
+    \item Research memo: what does an imagined rollout buy us, and what can go wrong?
+\end{itemize}
+
+\subsection{Chapter 25: Modern World Models: IRIS, DIAMOND, TD-MPC2, and WMPO}
+
+\begin{itemize}
+    \item Dreamer-style latent imagination as background
+    \item IRIS and transformer-based world models
+    \item Token-level prediction for visual control
+    \item DIAMOND and diffusion world models
+    \item TD-MPC2 and latent model predictive control
+    \item WMPO and policy optimization with learned world models
+    \item Planning vs. policy learning in learned latent space
+    \item Generative world models
+    \item Predictive world models
+    \item Model bias and compounding error
+    \item Coding exercise: compare one-step latent prediction and multi-step rollout error
+    \item Coding exercise: compare planning-based and policy-based use of a learned model
+    \item Research memo: how have world models evolved beyond Dreamer-style latent imagination?
+\end{itemize}
+
+\subsection{Chapter 26: JEPA-style Predictive Representation Learning}
+
+\begin{itemize}
+    \item Joint embedding predictive architectures
+    \item Predictive representation without pixel reconstruction
+    \item Latent target prediction
+    \item Stop-gradient
+    \item EMA target encoder
+    \item Variance regularization
+    \item Covariance regularization
+    \item Invariance regularization
+    \item Representation collapse
+    \item Collapse prevention
+    \item Visual predictive learning
+    \item JEPA-style world models for visual agents
+    \item Coding exercise: train a simple latent prediction model
+    \item Coding exercise: test for representation collapse
+    \item Research memo: why does avoiding pixel reconstruction change the objective of world modeling?
+\end{itemize}
+
+\subsection{Chapter 27: World Models for VLM Agents}
+
+\begin{itemize}
+    \item Visual observation encoding
+    \item Language-conditioned state representation
+    \item Belief state
+    \item Action-conditioned prediction
+    \item Offline trajectory encoding
+    \item Warm-starting policies from offline trajectories
+    \item Model-based planning with VLM feedback
+    \item World models as belief-state compressors
+    \item VLM agents in partially observable environments
+    \item Coding exercise: build a toy visual-language environment using MiniGrid, BabyAI, or another lightweight environment
+    \item Coding exercise: train a learned latent dynamics model on offline trajectories
+    \item Coding exercise: use imagined rollouts for planning or policy learning
+    \item Research memo: how can world models support long-horizon VLM agents?
+\end{itemize}
+
+\subsection{Project 5: Build a Toy World Model Agent}
+
+\begin{itemize}
+    \item Use a lightweight existing environment rather than building a full environment from scratch.
+    \item Collect trajectories from a toy environment.
+    \item Train a latent transition model.
+    \item Use imagined rollouts for planning or policy learning.
+    \item Compare model-free vs. model-based learning.
+    \item Analyze one-step and multi-step prediction error.
+    \item Analyze compounding model error.
+    \item Produce a world model experiment report.
+\end{itemize}
+
+\section{Part VI: VLMs, Serving, Long Context, and Intervention}
+
+\subsection{Chapter 28: Vision Transformer}
+
+\begin{itemize}
+    \item Image patches
+    \item Patch embeddings
+    \item Class token
+    \item Positional embeddings
+    \item ViT encoder
+    \item CNN vs. ViT
+    \item Inductive bias
+    \item Data scale
+    \item Patch size effects
+    \item Coding exercise: implement image patchification
+    \item Coding exercise: train a toy ViT classifier
+    \item Research memo: why does ViT require more data than CNNs?
+\end{itemize}
+
+\subsection{Chapter 29: CLIP}
+
+\begin{itemize}
+    \item Image encoder
+    \item Text encoder
+    \item Contrastive learning
+    \item Image-text alignment
+    \item Shared embedding space
+    \item Zero-shot classification
+    \item Image-text retrieval
+    \item Prompt templates for CLIP
+    \item CLIP bias
+    \item CLIP failure modes
+    \item Coding exercise: build a CLIP retrieval demo
+    \item Coding exercise: compare CLIP prompt templates
+    \item Research memo: does CLIP learn visual understanding or internet image-text correlation?
+\end{itemize}
+
+\subsection{Chapter 30: Inference and Serving Basics}
+
+\begin{itemize}
+    \item Autoregressive decoding loop
+    \item Prefill phase vs. decode phase
+    \item KV cache
+    \item Batch inference
+    \item Dynamic batching
+    \item Continuous batching
+    \item Throughput vs. latency
+    \item Tensor parallel inference
+    \item Quantized inference
+    \item vLLM
+    \item PagedAttention
+    \item SGLang
+    \item OpenAI-compatible local serving APIs
+    \item Speculative decoding
+    \item Medusa
+    \item EAGLE
+    \item Evaluation-time serving pitfalls
+    \item Coding exercise: serve a 1B--3B model with vLLM
+    \item Coding exercise: run batch evaluation through a local OpenAI-compatible endpoint
+    \item Coding exercise: compare Hugging Face \texttt{generate}, vLLM, and SGLang
+    \item Research memo: why is inference serving part of research infrastructure?
+\end{itemize}
+
+\subsection{Chapter 31: Long Context and Its Limits}
+
+\begin{itemize}
+    \item RoPE
+    \item Context extension
+    \item Position interpolation
+    \item NTK scaling
+    \item YaRN
+    \item LongRoPE
+    \item Sliding window attention
+    \item Sparse attention
+    \item KV cache memory cost
+    \item Prompt compression
+    \item Long-context evaluation
+    \item Needle-in-a-haystack evaluation
+    \item Criticism of needle-in-a-haystack benchmarks
+    \item Lost-in-the-middle effect
+    \item Long context vs. long reasoning
+    \item RAG vs. long context
+    \item Coding exercise: run a needle-in-a-haystack evaluation
+    \item Coding exercise: test whether the model can reason over distant evidence
+    \item Coding exercise: compare RAG and long-context prompting under fixed compute budget
+    \item Research memo: why does long context not automatically imply long reasoning?
+\end{itemize}
+
+\begin{quote}
+Long context increases the amount of information available to the model, but it does not automatically imply long-horizon reasoning, faithful evidence use, or robust multi-step synthesis.
+\end{quote}
+
+\subsection{Chapter 32: Retrieval Paradigms: Naive RAG and Agentic Retrieval}
+
+\begin{itemize}
+    \item Closed-book generation
+    \item Naive RAG pipeline
+    \item Sparse retrieval and BM25
+    \item Dense retrieval and embedding models
+    \item FAISS and vector indexes
+    \item Chunking and reranking
+    \item Retrieval-augmented prompting
+    \item Retrieval failure vs. generation failure
+    \item Limitations of single-step naive RAG
+    \item Multi-step retrieval
+    \item Query rewriting
+    \item HyDE
+    \item Self-RAG
+    \item Agentic retrieval
+    \item Retrieval with verification
+    \item Citation grounding and faithfulness
+    \item Coding exercise: build a naive FAISS-based RAG pipeline
+    \item Coding exercise: extend it with multi-step retrieval or query rewriting
+    \item Coding exercise: compare naive RAG, HyDE-style retrieval, and agentic retrieval
+    \item Research memo: does agentic retrieval improve reasoning or only improve recall?
+\end{itemize}
+
+\subsection{Chapter 33: BLIP-2 and LLaVA}
+
+\begin{itemize}
+    \item Vision-language pretraining
+    \item Captioning
+    \item VQA
+    \item Frozen vision encoder
+    \item Frozen LLM
+    \item Q-Former
+    \item Projector
+    \item Visual instruction tuning
+    \item Synthetic multimodal instruction data
+    \item Multimodal chat template
+    \item Coding exercise: run BLIP-2 VQA
+    \item Coding exercise: run LLaVA-style inference
+    \item Coding exercise: analyze VLM failure cases
+    \item Research memo: what is the difference between visual-language alignment and visual instruction tuning?
+\end{itemize}
+
+\subsection{Chapter 34: VLM Hallucination and Grounding}
+
+\begin{itemize}
+    \item Object hallucination
+    \item Attribute binding
+    \item OCR and text-image conflict
+    \item Spatial relation failures
+    \item Counting failures
+    \item Reference and linking failures
+    \item Language priors
+    \item Visual grounding
+    \item POPE-style evaluation
+    \item MME-style evaluation
+    \item CHAIR-style evaluation
+    \item Perception failure
+    \item Binding failure
+    \item Language-prior failure
+    \item Coding exercise: construct a small VLM failure benchmark
+    \item Coding exercise: evaluate 2--3 open-source VLMs
+    \item Research memo: how can we distinguish perception failure from language-prior failure?
+\end{itemize}
+
+\subsection{Chapter 35: VLM Intervention}
+
+\begin{itemize}
+    \item Prompt-based intervention
+    \item Visual evidence prompting
+    \item Image-text conflict intervention
+    \item Visual token ablation
+    \item Attention masking
+    \item Contrastive decoding
+    \item Evidence gating
+    \item Visual Contrastive Decoding
+    \item Perception failure vs. binding failure vs. language-prior failure
+    \item Coding exercise: test whether visual-evidence interventions reduce hallucination
+    \item Coding exercise: test whether removing or perturbing visual evidence changes the model answer
+    \item Research memo: when does intervention improve grounding, and when does it merely change output style?
+\end{itemize}
+
+\subsection{Chapter 36: Mechanistic Intervention and Representation Engineering}
+
+\begin{itemize}
+    \item Linear probing as a diagnostic tool
+    \item Activation steering
+    \item Representation engineering
+    \item Sparse autoencoders
+    \item Feature-level intervention
+    \item Concept erasure
+    \item Refusal directions
+    \item ROME and MEMIT as historical context
+    \item Visual-token representation intervention
+    \item VLM-specific activation analysis
+    \item Mechanistic interpretability for multimodal models
+    \item Coding exercise: train a linear probe on intermediate activations
+    \item Coding exercise: test activation steering or representation intervention on a controlled behavior
+    \item Coding exercise: analyze whether a VLM internally encodes the visual attribute it fails to report
+    \item Research memo: what is the difference between behavioral intervention and representation-level intervention?
+\end{itemize}
+
+\subsection{Project 6: Build a VLM Hallucination and Intervention Benchmark}
+
+\begin{itemize}
+    \item Construct multimodal examples for object, attribute, spatial, OCR, counting, and reference failures.
+    \item Evaluate 2--3 VLMs.
+    \item Serve models locally for scalable evaluation.
+    \item Compare baseline prompting, visual-evidence prompting, contrastive decoding, and intervention methods.
+    \item Test visual-token ablation or evidence gating.
+    \item Optionally test representation-level intervention.
+    \item Analyze whether failures come from perception, binding, or language prior.
+    \item Produce a benchmark and intervention report.
+\end{itemize}
+
+\section{Part VII: Research Capstone Extension}
+
+\subsection{Chapter 37: Research Project Design}
+
+\begin{itemize}
+    \item Problem selection
+    \item Claim formulation
+    \item Hypothesis design
+    \item Dataset construction
+    \item Baseline selection
+    \item Metric design
+    \item Ablation planning
+    \item Limitation analysis
+    \item Negative result analysis
+    \item Research memo writing
+    \item Coding exercise: write a one-page capstone proposal
+\end{itemize}
+
+\subsection{Chapter 38: Capstone Extension Implementation}
+
+\begin{itemize}
+    \item Select one previous project to extend.
+    \item Add a research question.
+    \item Strengthen baselines.
+    \item Add ablations.
+    \item Collect failure cases.
+    \item Organize results.
+    \item Prepare reproducibility artifacts.
+    \item Avoid starting a completely new project from scratch.
+\end{itemize}
+
+\begin{quote}
+The capstone is not a new project from scratch. It must extend one of the previous six projects by adding a research question, stronger baseline, ablation, failure analysis, or intervention.
+\end{quote}
+
+\subsection{Chapter 39: Capstone Report}
+
+\begin{itemize}
+    \item Introduction
+    \item Related work
+    \item Method
+    \item Experimental setup
+    \item Results
+    \item Ablation study
+    \item Error analysis
+    \item Limitations
+    \item Future work
+    \item Reproducibility checklist
+\end{itemize}
+
+\section*{Capstone Options}
+
+\subsection*{Capstone A: 300M Pretraining and Post-training Study}
+
+\begin{itemize}
+    \item Pretrain a 300M-scale decoder-only Transformer from scratch.
+    \item Compare 30M, 100M, and 300M training curves.
+    \item Study tokenizer choice, context length, or dataset mixture.
+    \item Apply SFT to the pretrained checkpoint.
+    \item Compare base and SFT behavior.
+    \item Analyze undertraining, generation quality, hallucination, and downstream adaptation.
+\end{itemize}
+
+\subsection*{Capstone B: 3B Assistant Post-training and Reasoning RL Study}
+
+\begin{itemize}
+    \item Compare base, SFT, LoRA SFT, DPO, and verifiable-reward-trained models.
+    \item Evaluate instruction following, hallucination, refusal, style, and reasoning.
+    \item Analyze how post-training changes model behavior.
+    \item Analyze whether reasoning RL improves correctness, verbosity, or both.
+    \item Produce a model card and evaluation report.
+\end{itemize}
+
+\subsection*{Capstone C: Exploration and Intrinsic Reward for LLM/VLM Agents}
+
+\begin{itemize}
+    \item Build or reuse a sparse-reward environment.
+    \item Compare extrinsic reward only, curiosity reward, RND, and information-gain-style reward.
+    \item Evaluate sample efficiency, exploration coverage, and final task performance.
+    \item Analyze reward hacking and failure modes.
+    \item Connect intrinsic reward design to agentic reasoning or VLM exploration.
+\end{itemize}
+
+\subsection*{Capstone D: World Model for VLM Agents}
+
+\begin{itemize}
+    \item Build or reuse a toy visual-language environment.
+    \item Collect offline trajectories.
+    \item Train a latent world model.
+    \item Warm-start a policy from offline data.
+    \item Use imagined rollouts for policy improvement.
+    \item Analyze model error and policy failure modes.
+\end{itemize}
+
+\subsection*{Capstone E: VLM Linking Failure and Intervention Benchmark}
+
+\begin{itemize}
+    \item Construct a dataset for entity, attribute, spatial, OCR, counting, and reference binding.
+    \item Evaluate open-source VLMs.
+    \item Test visual-evidence prompting, contrastive decoding, and evidence gating.
+    \item Optionally test representation-level intervention.
+    \item Analyze perception failure vs. binding failure vs. language-prior failure.
+    \item Produce a benchmark report with intervention results.
+\end{itemize}
+
+\subsection*{Capstone F: Naive RAG vs. Agentic Retrieval vs. Long Context}
+
+\begin{itemize}
+    \item Compare closed-book generation, naive RAG, HyDE-style retrieval, agentic retrieval, and long-context prompting.
+    \item Evaluate accuracy, faithfulness, citation correctness, latency, and cost.
+    \item Analyze retrieval failure and generation failure separately.
+    \item Test whether long context improves evidence access without improving long-horizon reasoning.
+\end{itemize}
+
+\section*{Expected Final Deliverables}
+
+\begin{itemize}
+    \item A from-scratch mini-GPT implementation.
+    \item A tokenizer training and analysis notebook.
+    \item An end-to-end pretraining pipeline.
+    \item A 300M-scale pretrained causal language model.
+    \item A pretraining report with compute budget, token budget, training curves, and ablations.
+    \item A 1B--3B SFT or LoRA-tuned assistant.
+    \item A DPO or toy RLHF training pipeline.
+    \item A verifiable-reward or GRPO-style reasoning RL experiment.
+    \item A minimal RL training stack.
+    \item An intrinsic-reward exploration experiment.
+    \item A toy world model agent.
+    \item A naive RAG and agentic retrieval comparison.
+    \item A local inference and serving setup using vLLM or SGLang.
+    \item A long-context evaluation report including needle-in-a-haystack and its limitations.
+    \item A VLM hallucination and intervention benchmark.
+    \item A mechanistic intervention or representation engineering mini-study.
+    \item A capstone research report.
+\end{itemize}
+
+\end{document}
