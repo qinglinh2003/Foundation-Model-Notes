@@ -1,0 +1,29 @@
+[
+  {
+    "name": "deep_narrow",
+    "n_layers": 8,
+    "d_model": 192,
+    "params": 3986304,
+    "val_loss": 3.0129343032836915,
+    "bits_per_byte": 1.4397374214652305,
+    "wall_time": 446.0174069404602
+  },
+  {
+    "name": "baseline",
+    "n_layers": 4,
+    "d_model": 256,
+    "params": 3732992,
+    "val_loss": 3.0494739294052122,
+    "bits_per_byte": 1.4571979638461803,
+    "wall_time": 281.6438763141632
+  },
+  {
+    "name": "shallow_wide",
+    "n_layers": 2,
+    "d_model": 384,
+    "params": 4412928,
+    "val_loss": 2.9819881916046143,
+    "bits_per_byte": 1.4249497525191632,
+    "wall_time": 179.57982921600342
+  }
+]

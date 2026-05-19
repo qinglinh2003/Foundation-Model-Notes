@@ -1,0 +1,30 @@
+{
+  "resume_checkpoint": "checkpoints/step_5000.pt",
+  "reference_log": "checkpoints/train_log.json",
+  "mid_reference": {
+    "step": 5000,
+    "train_loss": 3.397399425506592,
+    "val_loss": 3.281107969062273,
+    "lr": 0.0001693702175557149,
+    "grad_norm": 1.0218530893325806,
+    "seconds_since_last_log": 6.385090351104736
+  },
+  "final_reference": {
+    "step": 10000,
+    "train_loss": 3.2371163368225098,
+    "val_loss": 3.1493439230807994,
+    "lr": 3.000000693667526e-05,
+    "grad_norm": 1.128173589706421,
+    "seconds_since_last_log": 6.237582206726074
+  },
+  "final_resume": {
+    "step": 10000,
+    "train_loss": 3.279510021209717,
+    "val_loss": 3.1478702301202817,
+    "lr": 3.000000693667526e-05,
+    "grad_norm": 1.1547415256500244,
+    "seconds_since_last_log": 6.3457605838775635
+  },
+  "final_val_delta": -0.0014736929605176918,
+  "note": "This script restores model, optimizer, step, log, and RNG state. It does not restore the exact DataLoader iterator position, so bitwise-identical continuation is not expected."
+}

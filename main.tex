@@ -1,0 +1,224 @@
+\documentclass[11pt,openany]{book}
+
+% ---- Page layout ----
+\usepackage[margin=1in]{geometry}
+\usepackage{fancyhdr}
+\setlength{\headheight}{14pt}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE,RO]{\thepage}
+\fancyhead[RE]{\leftmark}
+\fancyhead[LO]{\rightmark}
+
+% ---- Typography and math ----
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usepackage{microtype}
+
+% ---- Hooks for environment wrapping ----
+\usepackage{etoolbox}
+
+% ---- Tables, figures, lists ----
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{float}
+
+% ---- Colors and links ----
+\usepackage[dvipsnames]{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue!60!black,citecolor=green!50!black,urlcolor=blue!70!black]{hyperref}
+
+% ---- TikZ (optional diagrams) ----
+\usepackage{tikz}
+
+% ---- Theme colors ----
+\definecolor{themeblue}{HTML}{2D8CFF}
+\definecolor{themedarkblue}{HTML}{1A6FD1}
+\definecolor{themelightblue}{HTML}{EBF5FF}
+
+% ---- Syntax highlighting colors (blue-compatible palette) ----
+\definecolor{codebg}{HTML}{F5F9FF}
+\definecolor{codekw}{HTML}{1A6FD1}
+\definecolor{codecomment}{HTML}{7F8C98}
+\definecolor{codestring}{HTML}{0F7B6C}
+\definecolor{codenumber}{HTML}{9B59B6}
+\definecolor{codebuiltin}{HTML}{D35400}
+
+% ---- Code listings ----
+\usepackage{listings}
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  breakautoindent=false,
+  postbreak=\mbox{\textcolor{codecomment}{$\hookrightarrow$}\space},
+  frame=leftline,
+  framerule=2.5pt,
+  numbers=left,
+  numberstyle=\tiny\color{codecomment},
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestring},
+  emphstyle=\color{codebuiltin},
+  showspaces=false,
+  showstringspaces=false,
+  captionpos=b,
+  backgroundcolor=\color{codebg},
+  rulecolor=\color{themeblue},
+  rulesepcolor=\color{themeblue},
+  framesep=6pt,
+  xleftmargin=14pt,
+  numbersep=8pt,
+  tabsize=4,
+  aboveskip=10pt,
+  belowskip=10pt,
+  framexleftmargin=14pt,
+}
+
+% ---- tcolorbox environments ----
+\usepackage[most]{tcolorbox}
+\tcbuselibrary{listings}
+
+
+\newtcolorbox{quickrecap}{
+  colback=themelightblue,
+  colframe=themeblue,
+  fonttitle=\bfseries,
+  title={},
+  sharp corners,
+  boxrule=0.5pt,
+  left=6pt, right=6pt, top=4pt, bottom=4pt,
+}
+
+\newtcolorbox{takeaways}{
+  colback=themelightblue,
+  colframe=themedarkblue,
+  fonttitle=\bfseries,
+  title=Key Takeaways,
+  sharp corners,
+  boxrule=0.5pt,
+  left=6pt, right=6pt, top=4pt, bottom=4pt,
+}
+
+% ---- Bibliography ----
+\usepackage{cite}
+
+% ---- Custom commands for tier labels ----
+\newcommand{\core}{\textbf{Core}}
+\newcommand{\optional}{\textbf{Optional}}
+\newcommand{\tierstretch}{\textbf{Stretch}}
+
+% ---- Title ----
+\title{Foundation Model Notes\\[0.3em]\large Architecture, Training, Alignment, and Evaluation}
+\author{}
+\date{}
+
+\begin{document}
+
+\frontmatter
+
+% ---- Cover page (full-bleed image) ----
+\thispagestyle{empty}
+\newgeometry{margin=0pt}
+\begin{tikzpicture}[remember picture, overlay]
+  \node[inner sep=0pt] at (current page.center) {%
+    \includegraphics[width=\paperwidth, height=\paperheight]{figures/cover/cover-portrait.png}%
+  };
+\end{tikzpicture}
+\clearpage
+\restoregeometry
+
+% ---- Title page ----
+\maketitle
+\tableofcontents
+
+\mainmatter
+
+% ---- Front matter chapters ----
+\input{frontmatter}
+\input{schedule}
+
+% ---- Part I: Transformer Foundations and Tokenization ----
+\part{Transformer Foundations and Tokenization}
+
+\input{chapters/ch01}
+\input{chapters/ch02}
+\input{chapters/ch03}
+\input{chapters/ch04}
+\input{chapters/ch05}
+\input{chapters/project1}
+
+% ---- Part II: Engineering Pretraining at Scale ----
+\part{Engineering Pretraining at Scale}
+
+\input{chapters/ch06}
+\input{chapters/ch07}
+\input{chapters/ch08}
+\input{chapters/ch09}
+\input{chapters/ch10}
+\input{chapters/project2}
+
+% ---- Part III: Post-training, Preference Optimization, and Reasoning RL ----
+\part{Post-training, Preference Optimization, and Reasoning RL}
+
+\input{chapters/ch11}
+\input{chapters/ch12}
+\input{chapters/ch13}
+\input{chapters/ch14}
+\input{chapters/project3}
+
+% ---- Part IV: Reinforcement Learning Foundations and Exploration ----
+\part{Reinforcement Learning Foundations and Exploration}
+
+\input{chapters/ch15}
+\input{chapters/ch16}
+\input{chapters/ch17}
+\input{chapters/ch18}
+\input{chapters/project4}
+
+% ---- Part V: World Models and Model-Based Agents ----
+\part{World Models and Model-Based Agents}
+
+\input{chapters/ch19}
+\input{chapters/ch20}
+\input{chapters/ch21}
+\input{chapters/ch22}
+\input{chapters/project5}
+
+% ---- Part VI: Evaluation, VLMs, Serving, Long Context, and Intervention ----
+\part{Evaluation, VLMs, Serving, Long Context, and Intervention}
+
+\input{chapters/ch23}
+\input{chapters/ch24}
+\input{chapters/ch25}
+\input{chapters/ch26}
+\input{chapters/ch27}
+\input{chapters/ch28}
+\input{chapters/project6}
+
+% ---- Part VII: Research Capstone ----
+\part{Research Capstone}
+
+\input{chapters/ch29}
+
+% ---- Back matter ----
+\input{backmatter}
+
+% ---- Appendices ----
+\appendix
+\part{Appendices}
+\input{appendices/app_lab1}
+\input{appendices/app_lab2}
+\input{appendices/app_lab3}
+\input{appendices/app_lab4}
+\input{appendices/app_lab5}
+\input{appendices/app_project1}
+\input{appendices/app_project1_guide}
+
+% ---- Bibliography ----
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

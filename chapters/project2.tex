@@ -1,0 +1,40 @@
+\chapter*{Project 2: Fixed-Budget 300M--1B Pretraining Study}
+\addcontentsline{toc}{chapter}{Project 2: Fixed-Budget 300M--1B Pretraining Study}
+\label{project:pretraining}
+
+% Project 2: The culmination of Part II.
+%
+% Core question: Given 4xH100 and a fixed GPU-hour budget, can you make
+% and justify the data, scaling, distributed-training, and evaluation
+% decisions needed to train a 300M--1B language model?
+%
+% This is NOT "Project 1 but bigger." The distinction:
+%   - Project 1 tests correctness: can you build a working training system?
+%   - Project 2 tests decision-making: when training is expensive and you
+%     can't afford to be wrong, can you make the right engineering choices?
+%
+% Required capabilities (all from Part II):
+%   - Ch6:  Modern LLM stack (bf16, Flash Attention, RMSNorm, etc.)
+%   - Ch7:  Distributed training (FSDP on 4xH100)
+%   - Ch8:  Scaling decision (model size vs token count under budget)
+%   - Ch9:  Data curation (filtering, dedup, mixing)
+%   - Ch10: Evaluation (benchmark suite, not just loss)
+%
+% Hardware: 4x NVIDIA H100 80GB
+%
+% Planned deliverables:
+%   1. Scaling pilot: train at 2--3 small scales, fit scaling curve,
+%      predict and justify final model size + token count
+%   2. Data pipeline: document collection, cleaning, dedup, domain mix
+%   3. Distributed training: FSDP/DDP on 4xH100, bf16, gradient
+%      checkpointing, throughput profiling
+%   4. Final 300M+ run under fixed GPU-hour budget
+%   5. Evaluation: benchmark suite + generation samples + analysis
+%   6. Engineering report: justify every major decision
+%
+% Stretch: 1B model, or continue-pretrain on domain corpus
+
+\textit{This project is a placeholder. It will require students to train a
+300M--1B language model on 4$\times$H100 under a fixed compute budget,
+making and justifying data, scaling, distributed-training, and evaluation
+decisions using the tools from Chapters 6--10.}

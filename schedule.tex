@@ -1,0 +1,595 @@
+\chapter*{Study Schedule}
+\addcontentsline{toc}{chapter}{Study Schedule}
+
+This schedule assumes a full-time learner working approximately 8 hours per day. Each day falls into one of three types:
+
+\begin{itemize}
+    \item \textbf{Concept Day} --- reading, paper study, building mathematical and architectural intuition. Checkpoint is usually a self-test or a short written explanation.
+    \item \textbf{Lab Day} --- setting up baselines, running experiments, verifying implementations, writing diagnosis memos. Checkpoint is experimental output.
+    \item \textbf{Integration Day} ($\bigstar$) --- project work that synthesizes multiple chapters into a single pipeline. Checkpoint is a project milestone or report.
+\end{itemize}
+
+\noindent Buffer days ($\triangleright$) are placed at Part boundaries. Use them to catch up, deepen understanding, or get ahead. Never skip them entirely---at minimum, review your experiment reports and consolidate understanding.
+
+\bigskip
+
+\section*{Workload Calibration}
+
+Unless a project explicitly says otherwise, the \textbf{Core} target is a small but complete experiment that runs on a single consumer GPU or a modest cloud instance. Larger runs are \textbf{Stretch}.
+
+\begin{itemize}
+    \item \textbf{Core:} complete the four-stage Lab (Setup/Build/Verify/Investigate), produce results tables, and write the experiment report.
+    \item \textbf{Compute Stretch:} scale to larger models, longer token budgets, more seeds, or multi-GPU.
+    \item \textbf{Research Stretch:} add ablations, compare against stronger baselines, or turn the result into capstone-grade evidence.
+\end{itemize}
+
+\section*{Experiment Reports}
+
+You will write \textbf{14 major reports before the final capstone}: 8 lab experiment reports and 6 project reports. The course then ends with 1 capstone report. Not every chapter requires a formal report---most chapters end with a lightweight checkpoint. All reports follow the six-section template: Question / Setup / Interventions / Results / Diagnosis / Next Step.
+
+\bigskip
+
+%% ================================================================
+%% PART I  ---  FULLY POLISHED (Ch1 content is complete)
+%% ================================================================
+\section*{Part I: Transformer Foundations and Tokenization \hfill Days 1--12}
+
+\medskip
+\noindent\textit{Experiment reports in this Part: 2 (after Lab~1 and Project~1).}
+
+\begin{description}[style=nextline, leftmargin=1.8cm, labelwidth=1.5cm]
+
+%% --- Ch1: Before Transformer (3 days) ---
+
+\item[Day 1] \textbf{Concept Day --- Pre-Transformer Sequence Modeling}
+
+\textit{Core outcome:} You can explain why n-gram models fail on unseen contexts, why LSTM's additive cell state alleviates vanishing gradients, and how the Seq2Seq bottleneck motivated attention.
+
+\textit{Tasks:}
+\begin{enumerate}
+    \item Read Ch.\,1 in full (\S1.1--\S1.9), including all Pause-and-Verify and Intuition Checkpoint boxes.
+    \item Work through the bigram toy example by hand: build the probability table, identify the zero-probability bigram, compute perplexity.
+    \item Write out the LSTM gate equations from memory and trace the gradient path from $\mathbf{c}_T$ back to $\mathbf{c}_1$.
+    \item Review the Trick Table (gradient clipping, truncated BPTT, hidden-state detach, teacher forcing, sampling temperature).
+\end{enumerate}
+
+\textit{Checkpoint:} Close the book and answer all 5 Learning Objectives. Any you cannot answer $\rightarrow$ re-read that section.
+
+\item[Day 2] \textbf{Lab Day --- Baseline Setup, Build, and Verify}
+
+\textit{Core outcome:} You have a running char-level LSTM baseline with GRU support, nucleus sampling, and gradient norm logging, and you have verified three correctness properties.
+
+\textit{Tasks:}
+\begin{enumerate}
+    \item Read core papers: \emph{Hochreiter \& Schmidhuber 1997} (Sections 1--4) and \emph{Bahdanau et al.\ 2015} (Sections 1--3, Figure~3). Skim \emph{Sutskever et al.\ 2014}.
+    \item \textbf{Setup:} Generate or write the char-level LSTM baseline using the Ch1 lab spec. Confirm it trains and achieves PPL within the expected range.
+    \item \textbf{Build:} Add GRU as an alternative architecture; add nucleus (top-$p$) sampling; add per-step gradient norm logging.
+    \item \textbf{Verify:} Complete all three sanity checks---hidden-state detach, loss alignment on non-padded tokens, deterministic greedy output. Write one sentence per check: what you tested, what you found.
+\end{enumerate}
+
+\textit{Checkpoint:} Baseline LSTM trains to target PPL; all 3 Verify checks pass with written confirmation.
+
+\item[Day 3] \textbf{Lab Day --- Investigate and Experiment Report}
+
+\textit{Core outcome:} You can design controlled comparisons, read loss curves and sample quality diagnostically, and write a concise experiment report.
+
+\textit{Tasks:}
+\begin{enumerate}
+    \item \textbf{Investigate:}
+    \begin{itemize}
+        \item LSTM vs.\ GRU: convergence speed, final PPL, tokens/sec.
+        \item Sequence length 64 vs.\ 256: training speed, sample coherence, gradient norm behavior.
+        \item Sampling: temperature 0.5 / 1.0 / 1.5 and nucleus $p = 0.95$. Which produces the most coherent text? Why?
+    \end{itemize}
+    \item Organize results into tables and plots.
+    \item Write a 500-word Experiment Report (Question / Setup / Interventions / Results / Diagnosis / Next Step). Include at least one finding that surprised you.
+\end{enumerate}
+
+\textit{Checkpoint:} Results table + plots + 500-word report complete.
+
+%% --- Ch2--3: Attention and Decoder-only Transformer (3 days) ---
+
+\item[Day 4] \textbf{Concept Day --- Attention Is All You Need}
+
+\textit{Core outcome:} You can trace a full forward pass through multi-head self-attention and explain why the Transformer removes the sequential bottleneck.
+
+\textit{Tasks:}
+\begin{enumerate}
+    \item Read Ch.\,2 (Attention Is All You Need). Study \emph{Vaswani et al.\ 2017} Sections 1--3 and Figure~2.
+    \item Compute scaled dot-product attention by hand on a 3-token example.
+    \item Explain: why $\sqrt{d_k}$ scaling? What happens without it?
+\end{enumerate}
+
+\textit{Checkpoint:} Hand-computed attention example with correct softmax weights.
+
+\item[Day 5] \textbf{Concept + Lab Day --- Decoder-Only Architecture}
+
+\textit{Core outcome:} You understand causal masking, KV-cache, and why decoder-only won; you have a working minimal Transformer.
+
+\textit{Tasks:}
+\begin{enumerate}
+    \item Read Ch.\,3 (Decoder-only Transformer): causal masking, generation strategies, positional encoding, layer norm placement.
+    \item Use an agent to build a minimal decoder-only Transformer (2--4 layers) with causal LM objective.
+    \item Verify: causal mask prevents attending to future tokens; forward pass produces valid logits; training loss decreases.
+\end{enumerate}
+
+\textit{Checkpoint:} Training loss curve shows clear decrease over 1000 steps.
+
+\item[Day 6] \textbf{Lab Day --- Training Loop Engineering}
+
+\textit{Core outcome:} You can configure a reproducible training pipeline with proper LR scheduling, gradient clipping, mixed precision, and logging.
+
+\textit{Tasks:}
+\begin{enumerate}
+    \item Read Ch.\,4 (Training Loop Engineering): optimizer choice, cosine LR schedule, gradient clipping, AMP, checkpointing, debugging loss spikes.
+    \item Refactor your mini-Transformer: add cosine LR, gradient clipping, AMP, checkpoint save/load, W\&B or TensorBoard logging.
+    \item Verify: checkpoint save $\rightarrow$ load $\rightarrow$ resume produces identical loss trajectory.
+\end{enumerate}
+
+\textit{Checkpoint:} Reproducible training run with dashboard screenshot showing loss, LR, and gradient norm.
+
+%% --- Ch5: Tokenization (2 days) ---
+
+\item[Day 7] \textbf{Concept + Lab Day --- Tokenization}
+
+\textit{Core outcome:} You understand BPE, WordPiece, and Unigram tokenization, and can evaluate how tokenizer choice affects model behavior.
+
+\textit{Tasks:}
+\begin{enumerate}
+    \item Read Ch.\,5 (Tokenization). Study \emph{Sennrich et al.\ 2016} on BPE.
+    \item Train a BPE tokenizer on a small corpus. Compare vocabulary size, compression ratio, and OOV rate to a character-level baseline.
+    \item Test HuggingFace tokenizers on diverse inputs (English, code, math). Note where tokenization boundaries are surprising.
+\end{enumerate}
+
+\textit{Checkpoint:} Tokenizer comparison table (BPE vs.\ char-level: vocab size, compression ratio, OOV rate).
+
+%% --- Project 1: MiniGPT (3 days) ---
+
+\item[Day 8] \textbf{Concept Day --- Generation and Evaluation}
+
+\textit{Core outcome:} You can compare generation strategies (greedy, beam, top-$k$, nucleus) and evaluate language model quality beyond loss.
+
+\textit{Tasks:}
+\begin{enumerate}
+    \item Re-read Ch.\,3 generation section and Ch.\,1 \S1.7 on generation strategies. Compare the two discussions.
+    \item Add top-$k$ and beam search to your mini-Transformer.
+    \item Generate samples with each strategy. Qualitatively compare coherence, diversity, and repetition.
+\end{enumerate}
+
+\textit{Checkpoint:} Sample outputs from 4 decoding strategies with 3-sentence comparative analysis.
+
+\item[Day 9--10] $\bigstar$ \textbf{Integration Days --- Project 1: MiniGPT}
+
+\textit{Core outcome:} You can assemble a complete small-scale language model pipeline (tokenizer + model + training + evaluation + generation) and diagnose its behavior.
+
+\textit{Tasks:}
+\begin{enumerate}
+    \item Assemble components from Days 1--8: tokenizer, model, training loop, generation.
+    \item Train on a bounded corpus. Core target: 1--10M tokens; Stretch: 50M+.
+    \item Evaluate: perplexity, sample quality, generation diversity.
+    \item Run at least one ablation: e.g., tokenizer (BPE vs.\ char), context length, or model depth.
+    \item Write Project~1 report: architecture, training setup, results, ablation analysis, what you would change with 10$\times$ compute.
+\end{enumerate}
+
+\textit{Checkpoint:} Project~1 report complete with training curves, evaluation table, and ablation.
+
+\item[Day 11--12] $\bigstar$ $\triangleright$ \textbf{Integration + Buffer --- Project 1 Completion and Part I Review}
+
+\textit{Core outcome:} All Part~I work is consolidated; you can explain the full pipeline from raw text to generated output.
+
+\textit{Tasks:}
+\begin{enumerate}
+    \item Finalize the Project~1 report using the six-section experiment report format. Ensure reproducibility: all code, configs, and data pointers documented.
+    \item Review all Part~I work: re-read your Lab~1 report and project report. Identify gaps.
+    \item Fill gaps: re-run failed experiments, clarify notes.
+    \item \textbf{Self-assessment:} for each of Ch.\,1--5, can you explain the core idea to a colleague in 2 minutes without notes?
+\end{enumerate}
+
+\textit{Checkpoint:} All Part~I deliverables complete. Self-assessment gaps identified and addressed.
+
+\end{description}
+
+%% ================================================================
+%% PART II  ---  PROVISIONAL (chapter content not yet written)
+%% ================================================================
+\section*{Part II: Data, Pretraining, Distributed Training, and Scaling \hfill Days 13--30}
+
+\medskip
+\noindent\textit{Schedule for Parts II--VII is provisional and will be refined as chapter content is written. The daily format and rhythm are established; specific tasks will be updated.}
+
+\medskip
+\noindent\textit{Experiment reports in this Part: 3 (data engineering, scaling laws, distributed training).}
+
+\begin{description}[style=nextline, leftmargin=1.8cm, labelwidth=1.5cm]
+
+\item[Day 13--14] \textbf{Concept Days --- Encoder vs.\ Decoder Pretraining (Ch.\,6)}
+
+\textit{Core outcome:} You can explain when to use encoder-only, decoder-only, or encoder-decoder architectures, and why decoder-only dominated.
+
+\textit{Tasks:} Read Ch.\,6. Compare BERT's MLM vs.\ GPT's autoregressive objective. Fine-tune a small BERT on a classification task. Compare loss dynamics to your autoregressive MiniGPT.
+
+\textit{Checkpoint:} One-page comparison of pretraining paradigms with empirical evidence from your experiments.
+
+\item[Day 15--16] \textbf{Concept + Lab Days --- Scaling and In-Context Learning (Ch.\,7)}
+
+\textit{Core outcome:} You can run and interpret in-context learning experiments and understand prompt sensitivity.
+
+\textit{Tasks:} Read Ch.\,7. Study \emph{Brown et al.\ 2020}. Experiment with zero/few-shot ICL. Design a prompt sensitivity experiment (same task, 5 prompt variants).
+
+\textit{Checkpoint:} ICL accuracy table + prompt sensitivity analysis.
+
+\item[Day 17--19] \textbf{Concept + Lab Days --- Data Engineering (Ch.\,8)}
+
+\textit{Core outcome:} You can design a data filtering/deduplication pipeline and explain why data quality dominates model quality at scale.
+
+\textit{Tasks:} Read Ch.\,8. Study \emph{RefinedWeb} and \emph{C4 documentation}. Implement: language detection, length filtering, perplexity-based quality scoring, MinHash near-dedup. Write Experiment Report.
+
+\textit{Checkpoint:} Filtering pipeline + dedup script + experiment report on data quality impact.
+
+\item[Day 20--21] \textbf{Concept + Lab Days --- Scaling Laws (Ch.\,9)}
+
+\textit{Core outcome:} You can reproduce a micro-scale scaling law and predict compute-optimal model size.
+
+\textit{Tasks:} Read Ch.\,9. Study \emph{Kaplan et al.\ 2020} and \emph{Chinchilla}. Train 3--5 models of different sizes, plot loss vs.\ compute. Use your fit to predict optimal allocation. Write Experiment Report.
+
+\textit{Checkpoint:} Scaling law plot + compute-optimal prediction + experiment report.
+
+\item[Day 22--23] \textbf{Concept + Lab Days --- Distributed Training (Ch.\,10)}
+
+\textit{Core outcome:} You can explain ZeRO stages, FSDP, and tensor/pipeline parallelism, and profile memory/throughput.
+
+\textit{Tasks:} Read Ch.\,10. Study FSDP docs. Multi-GPU: wrap model with FSDP. Single-GPU: detailed pseudocode + memory profile. Write Experiment Report.
+
+\textit{Checkpoint:} Memory/throughput profile + distributed training experiment report.
+
+\item[Day 24--28] $\bigstar$ \textbf{Integration Days --- Project 2: 300M-scale Pretraining}
+
+\textit{Core outcome:} You have designed and executed a pretraining run, monitored training dynamics, and analyzed scaling behavior.
+
+\textit{Tasks:} Finalize data pipeline + tokenizer + model config. Compute token budget via Chinchilla scaling. Launch largest feasible run (Core: documented 300M recipe + smaller actual run; Stretch: full 300M). Monitor loss, gradient norm, throughput. Evaluate and write Project~2 report.
+
+\textit{Checkpoint:} Project~2 report with training curves, evaluation, scaling analysis.
+
+\item[Day 29--30] $\triangleright$ \textbf{Buffer --- Part I--II Review}
+
+\textit{Core outcome:} Consolidated understanding from raw text through pretraining at scale.
+
+\textit{Tasks:} Finalize Project~2 report. Review all Part~II experiment reports. Fill gaps. Self-assessment.
+
+\textit{Checkpoint:} All Part~II deliverables complete.
+
+\end{description}
+
+%% ================================================================
+%% PART III
+%% ================================================================
+\section*{Part III: Post-training, Preference Optimization, and Reasoning RL \hfill Days 31--44}
+
+\medskip
+\noindent\textit{Experiment reports in this Part: 3 (LoRA rank ablation, alignment comparison, project report).}
+
+\begin{description}[style=nextline, leftmargin=1.8cm, labelwidth=1.5cm]
+
+\item[Day 31--32] \textbf{Concept + Lab Days --- Instruction Tuning (Ch.\,11)}
+
+\textit{Core outcome:} You can SFT a small open model with LoRA and evaluate the before/after difference.
+
+\textit{Tasks:} Read Ch.\,11. Fine-tune 0.5B--1B model on instruction data with LoRA. Compare outputs before/after SFT. Evaluate on MT-Bench subset.
+
+\textit{Checkpoint:} SFT model + before/after comparison table.
+
+\item[Day 33--34] \textbf{Concept + Lab Days --- LoRA, QLoRA, and PEFT (Ch.\,12)}
+
+\textit{Core outcome:} You can explain LoRA's mechanism, select appropriate rank, and diagnose when PEFT underperforms full fine-tuning.
+
+\textit{Tasks:} Read Ch.\,12. Study \emph{Hu et al.\ 2022}. Train with LoRA ranks $r = 4, 8, 16, 64$. Compare downstream quality and training efficiency. Write Experiment Report.
+
+\textit{Checkpoint:} Rank ablation table + experiment report.
+
+\item[Day 35--37] \textbf{Concept + Lab Days --- DPO and Preference Optimization (Ch.\,13)}
+
+\textit{Core outcome:} You can run DPO, diagnose reward hacking and length bias, and explain when DPO vs.\ PPO is appropriate.
+
+\textit{Tasks:} Read Ch.\,13. Study \emph{Rafailov et al.\ 2023}. Implement DPO on your SFT model. Analyze for length bias and reward overoptimization. Compare generation quality before/after.
+
+\textit{Checkpoint:} DPO model + failure mode analysis.
+
+\item[Day 38--40] \textbf{Concept + Lab Days --- RLHF and Reasoning RL (Ch.\,14)}
+
+\textit{Core outcome:} You can compare DPO, RLHF/PPO, and GRPO, and explain which alignment approach fits which scenario.
+
+\textit{Tasks:} Read Ch.\,14. Implement or use TRL for RLHF. Run toy GRPO on math/code verification. Write Experiment Report comparing the three paradigms with evidence.
+
+\textit{Checkpoint:} Three-way alignment comparison + experiment report.
+
+\item[Day 41--43] $\bigstar$ \textbf{Integration Days --- Project 3: Build and Align a 3B Assistant}
+
+\textit{Core outcome:} You have an end-to-end SFT $\rightarrow$ alignment pipeline and can diagnose quality across stages.
+
+\textit{Tasks:} Select 1B--3B base model. Run SFT (LoRA). Run DPO as Core alignment; PPO as Stretch. Evaluate: base vs.\ SFT vs.\ aligned. Write Project~3 report.
+
+\textit{Checkpoint:} Project~3 report with stage-by-stage evaluation.
+
+\item[Day 44] $\triangleright$ \textbf{Buffer --- Part III Review}
+
+\textit{Core outcome:} You can pretrain, fine-tune, and align a language model end-to-end.
+
+\textit{Tasks:} Finalize reports. Self-assessment. Prepare for RL foundations.
+
+\textit{Checkpoint:} All Part~III deliverables complete.
+
+\end{description}
+
+%% ================================================================
+%% PART IV
+%% ================================================================
+\section*{Part IV: Evaluation, VLMs, Serving, Long Context, and Intervention \hfill Days 45--60}
+
+\medskip
+\noindent\textit{Experiment reports in this Part: 2 (quantization comparison, hallucination intervention).}
+
+\begin{description}[style=nextline, leftmargin=1.8cm, labelwidth=1.5cm]
+
+\item[Day 45--46] \textbf{Concept + Lab Days --- Evaluation Methodology (Ch.\,15)}
+
+\textit{Core outcome:} You can design a rigorous evaluation plan with appropriate metrics, baselines, significance tests, and contamination checks.
+
+\textit{Tasks:} Read Ch.\,15. Design and execute an evaluation plan for one of your previous models. Report results with confidence intervals.
+
+\textit{Checkpoint:} Evaluation results with error bars.
+
+\item[Day 47--48] \textbf{Concept + Lab Days --- ViT and CLIP (Ch.\,16)}
+
+\textit{Core outcome:} You understand vision transformers, contrastive learning, and zero-shot vision-language alignment.
+
+\textit{Tasks:} Read Ch.\,16. Study \emph{Dosovitskiy et al.\ (ViT)} and \emph{Radford et al.\ (CLIP)}. Fine-tune ViT on image classification. Explore CLIP zero-shot. Implement CLIP-style contrastive loss on a toy dataset.
+
+\textit{Checkpoint:} ViT fine-tuning results + CLIP zero-shot demo + contrastive loss implementation.
+
+\item[Day 49--50] \textbf{Concept + Lab Days --- VLM Architecture (Ch.\,17)}
+
+\textit{Core outcome:} You understand BLIP-2, LLaVA, Q-Former, and visual instruction tuning, and can categorize VLM errors.
+
+\textit{Tasks:} Read Ch.\,17. Run inference with a public VLM on diverse inputs. Design a 50-image evaluation and categorize errors.
+
+\textit{Checkpoint:} VLM error categorization table.
+
+\item[Day 51--52] \textbf{Concept + Lab Days --- Inference and Serving (Ch.\,18)}
+
+\textit{Core outcome:} You can serve a model with vLLM/SGLang and quantify the throughput/quality trade-off of quantization.
+
+\textit{Tasks:} Read Ch.\,18. Set up vLLM or SGLang. Measure throughput and latency. Compare FP16 vs.\ INT4: throughput, latency, output quality. Write Experiment Report.
+
+\textit{Checkpoint:} Serving benchmark + quantization comparison + experiment report.
+
+\item[Day 53--54] \textbf{Concept + Lab Days --- Long Context and RAG (Ch.\,19)}
+
+\textit{Core outcome:} You can run needle-in-a-haystack experiments and compare RAG vs.\ long-context approaches.
+
+\textit{Tasks:} Read Ch.\,19. Run needle-in-a-haystack at different positions. Build a simple RAG system. Compare RAG vs.\ long-context on QA.
+
+\textit{Checkpoint:} Needle-in-a-haystack heatmap + RAG vs.\ long-context comparison.
+
+\item[Day 55--56] \textbf{Concept + Lab Days --- VLM Hallucination and Intervention (Ch.\,20)}
+
+\textit{Core outcome:} You can evaluate hallucination, categorize failure types, and apply a simple intervention (activation patching or representation engineering).
+
+\textit{Tasks:} Read Ch.\,20. Evaluate a VLM on POPE/CHAIR. Categorize hallucination types. Implement a simple activation patching experiment. Write Experiment Report.
+
+\textit{Checkpoint:} Hallucination evaluation + intervention results + experiment report.
+
+\item[Day 57--59] $\bigstar$ \textbf{Integration Days --- Project 4: VLM Hallucination Benchmark}
+
+\textit{Core outcome:} You have designed and executed a VLM benchmark with baseline measurements, intervention, and trade-off analysis.
+
+\textit{Tasks:} Design benchmark: model(s), dataset, metrics, baseline, intervention. Run baseline $\rightarrow$ intervention $\rightarrow$ ablations. Analyze: does intervention reduce hallucination? At what cost? Write Project~4 report.
+
+\textit{Checkpoint:} Project~4 report with intervention results and trade-off analysis.
+
+\item[Day 60] $\triangleright$ \textbf{Buffer --- Part IV Review}
+
+\textit{Core outcome:} You can evaluate, serve, and diagnose LLM/VLM systems with appropriate metrics and deployment constraints.
+
+\textit{Tasks:} Finalize Project~4 report. Review Part~IV experiment reports. Consolidate notes for RL foundations.
+
+\textit{Checkpoint:} All Part~IV deliverables complete.
+
+\end{description}
+
+%% ================================================================
+%% PART V
+%% ================================================================
+\section*{Part V: RL Foundations and Exploration \hfill Days 61--72}
+
+\medskip
+\noindent\textit{Experiment reports in this Part: 2 (algorithm comparison, exploration ablation).}
+
+\begin{description}[style=nextline, leftmargin=1.8cm, labelwidth=1.5cm]
+
+\item[Day 61--62] \textbf{Concept + Lab Days --- MDP and Dynamic Programming (Ch.\,21)}
+
+\textit{Core outcome:} You can implement value/policy iteration on a gridworld and explain the curse of dimensionality.
+
+\textit{Tasks:} Read Ch.\,21. Implement value iteration and policy iteration. Visualize value functions. Study how computation scales with state space.
+
+\textit{Checkpoint:} Gridworld solver with value function visualization.
+
+\item[Day 63--64] \textbf{Concept + Lab Days --- Model-free RL: Q-learning to DQN (Ch.\,22)}
+
+\textit{Core outcome:} You can explain Q-learning, experience replay, and target networks, and have a working DQN agent.
+
+\textit{Tasks:} Read Ch.\,22. Study \emph{Mnih et al.\ 2015}. Implement tabular Q-learning, then DQN on CartPole. Plot Q-value convergence.
+
+\textit{Checkpoint:} DQN agent solving CartPole with convergence plot.
+
+\item[Day 65--67] \textbf{Concept + Lab Days --- Policy Gradient, Actor-Critic, PPO (Ch.\,23)}
+
+\textit{Core outcome:} You can implement and compare REINFORCE, actor-critic, and PPO, and explain why PPO's clipped objective improves stability.
+
+\textit{Tasks:} Read Ch.\,23. Study \emph{Schulman et al.\ 2017}. Implement all three on the same environment. Compare training stability and sample efficiency. Write Experiment Report.
+
+\textit{Checkpoint:} 3-algorithm comparison plot + experiment report.
+
+\item[Day 68--69] \textbf{Concept + Lab Days --- Exploration (Ch.\,24)}
+
+\textit{Core outcome:} You can explain intrinsic motivation and implement RND on a sparse-reward task.
+
+\textit{Tasks:} Read Ch.\,24. Study \emph{Pathak et al.\ (ICM)} and \emph{Burda et al.\ (RND)}. Implement RND bonus. Compare with/without intrinsic reward. Write Experiment Report.
+
+\textit{Checkpoint:} Exploration ablation + experiment report.
+
+\item[Day 70--71] $\bigstar$ \textbf{Integration Days --- Project 5: Minimal RL Training Stack}
+
+\textit{Core outcome:} You have a clean, modular RL codebase with 2+ algorithms and standardized benchmarks.
+
+\textit{Tasks:} Design modular RL stack: environment wrapper, replay buffer, agent interface, training loop, logging. Integrate PPO + DQN. Run comparative benchmarks on 2--3 environments. Write Project~5 report.
+
+\textit{Checkpoint:} Project~5 report with benchmark results.
+
+\item[Day 72] $\triangleright$ \textbf{Buffer --- Part V Review}
+
+\textit{Core outcome:} Solid foundation in RL from tabular to deep policy optimization.
+
+\textit{Tasks:} Review experiment reports. Self-assessment on RL concepts. Prepare for world models.
+
+\textit{Checkpoint:} All Part~V deliverables complete.
+
+\end{description}
+
+%% ================================================================
+%% PART VI
+%% ================================================================
+\section*{Part VI: World Models and Model-Based Agents \hfill Days 73--84}
+
+\medskip
+\noindent\textit{Experiment reports in this Part: 2 (model error analysis, world model agent evaluation).}
+
+\begin{description}[style=nextline, leftmargin=1.8cm, labelwidth=1.5cm]
+
+\item[Day 73--74] \textbf{Concept + Lab Days --- Model-based RL (Ch.\,25)}
+
+\textit{Core outcome:} You can implement Dyna-Q and explain when learned models help vs.\ hurt.
+
+\textit{Tasks:} Read Ch.\,25. Implement Dyna-Q. Measure effect of model error by training with intentionally noisy model. Write Experiment Report.
+
+\textit{Checkpoint:} Model error analysis + experiment report.
+
+\item[Day 75--76] \textbf{Concept + Lab Days --- Latent Dynamics Models (Ch.\,26)}
+
+\textit{Core outcome:} You can train a latent dynamics model and diagnose posterior collapse via KL balancing.
+
+\textit{Tasks:} Read Ch.\,26. Implement encoder $\rightarrow$ recurrent latent state $\rightarrow$ decoder. Experiment with KL weight scheduling. Visualize latent space.
+
+\textit{Checkpoint:} Latent dynamics model with reconstruction loss curve + KL balancing experiment.
+
+\item[Day 77--79] \textbf{Concept + Lab Days --- Dreamer and Modern World Models (Ch.\,27)}
+
+\textit{Core outcome:} You understand Dreamer, IRIS, DIAMOND, and TD-MPC2 architectures, and can identify failure modes of world models.
+
+\textit{Tasks:} Read Ch.\,27. Study the Dreamer codebase. Implement simplified imagination-based planning. Compare to model-free baseline. Analyze failure cases (hallucinated rewards, latent collapse).
+
+\textit{Checkpoint:} Imagination-based agent with comparison to model-free baseline.
+
+\item[Day 80--81] \textbf{Concept Days --- Predictive Representations and VLM Agents (Ch.\,28)}
+
+\textit{Core outcome:} You can connect world models to VLM grounding and have selected a capstone direction.
+
+\textit{Tasks:} Read Ch.\,28. Study JEPA, V-JEPA. Map connections: world model $\rightarrow$ action planning $\rightarrow$ VLM grounding. \textbf{Choose capstone direction (A--F).}
+
+\textit{Checkpoint:} Concept map + capstone direction selected.
+
+\item[Day 82--83] $\bigstar$ \textbf{Integration Days --- Project 6: Toy World Model Agent}
+
+\textit{Core outcome:} You have a working model-based agent with planning and can compare it to model-free baselines.
+
+\textit{Tasks:} Build latent model + planning + acting loop on a visual RL environment. Train world model. Tune imagination horizon. Compare to PPO baseline. Write Experiment Report + Project~6 report.
+
+\textit{Checkpoint:} Project~6 report with performance comparison + experiment report.
+
+\item[Day 84] $\triangleright$ \textbf{Buffer --- Part VI Review and Capstone Proposal}
+
+\textit{Core outcome:} All Part~VI work complete; capstone proposal finalized.
+
+\textit{Tasks:} Finalize Project~6 report. Review Part~VI experiment reports. \textbf{Submit capstone proposal:} research question, method, baselines, evaluation plan, timeline for Days~85--90.
+
+\textit{Checkpoint:} Project~6 report + capstone proposal submitted.
+
+\end{description}
+
+%% ================================================================
+%% PART VII
+%% ================================================================
+\section*{Part VII: Research Capstone \hfill Days 85--90}
+
+\begin{description}[style=nextline, leftmargin=1.8cm, labelwidth=1.5cm]
+
+\item[Day 85] $\bigstar$ \textbf{Capstone --- Setup and Baselines}
+
+\textit{Core outcome:} Repository, data, and baselines are ready; baseline results are reproducible.
+
+\textit{Tasks:} Set up capstone repo. Reuse components from previous projects. Run baseline experiments. Verify reproducibility.
+
+\textit{Checkpoint:} Capstone repo + reproducible baseline results.
+
+\item[Day 86] $\bigstar$ \textbf{Capstone --- Main Experiments}
+
+\textit{Core outcome:} Your proposed method or experiment is implemented and producing results.
+
+\textit{Tasks:} Implement proposed method. Run main experiments. Monitor for bugs and unexpected results.
+
+\textit{Checkpoint:} Main experiment results.
+
+\item[Day 87] $\bigstar$ \textbf{Capstone --- Ablations and Error Analysis}
+
+\textit{Core outcome:} You understand what components of your method matter and where it fails.
+
+\textit{Tasks:} Run ablation studies: remove or vary key components. Run error analysis on failure cases. Collect qualitative examples.
+
+\textit{Checkpoint:} Ablation table + error analysis with examples.
+
+\item[Day 88--89] $\bigstar$ \textbf{Capstone --- Report Writing}
+
+\textit{Core outcome:} Complete, publication-quality capstone report.
+
+\textit{Tasks:} Write full report: introduction, related work, method, experiments, results, ablations, error analysis, limitations, future work. Create all figures and tables. Ensure reproducibility: code, configs, data pointers documented.
+
+\textit{Checkpoint:} Complete capstone report.
+
+\item[Day 90] $\bigstar$ \textbf{Capstone --- Final Submission and Presentation}
+
+\textit{Core outcome:} Course complete. You can present and defend a research project.
+
+\textit{Tasks:} Final report revision. Package reproducibility materials. Prepare and deliver a 15-minute presentation.
+
+\textit{Checkpoint:} Final report + reproducibility package + presentation. \textbf{Course complete.}
+
+\end{description}
+
+\bigskip
+\hrule
+\bigskip
+
+\section*{Summary Statistics}
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+\textbf{Item} & \textbf{Count} \\
+\midrule
+Total days & 90 \\
+Concept days & $\sim$28 \\
+Lab days & $\sim$26 \\
+Integration / project days & $\sim$30 \\
+Buffer / review days & 6 \\
+Lab experiment reports & 8 \\
+Project reports & 6 \\
+Capstone report & 1 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent \textbf{Note.} Buffer days ($\triangleright$) are placed at Part boundaries. If ahead of schedule, use them for Optional or Stretch exercises. If behind, use them to finish Core tasks. Never skip a buffer day entirely---at minimum, review your experiment reports and consolidate understanding.
+
+\medskip
+
+\noindent \textbf{Schedule refinement.} Parts II--VII schedules are provisional and will be updated as chapter content is written. The daily structure (Core Outcome / Tasks / Checkpoint) and rhythm (concept $\rightarrow$ lab $\rightarrow$ integration) are fixed; specific tasks will evolve.

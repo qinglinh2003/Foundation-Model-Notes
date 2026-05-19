@@ -1,0 +1,70 @@
+# Wug test: pseudo-words for morphological generalization
+#
+# Format: lemma <TAB> expected <TAB> tag <TAB> notes
+#   expected: primary answer (pipe-separated if multiple are acceptable)
+#   tag: PLURAL / 3SG / PAST / GERUND
+#   notes: which phonological cell is tested
+#
+# Sources:
+#   - Berko (1958): the original wug study, items marked [Berko]
+#   - Extensions: hand-curated to cover phonotactic cells Berko did not
+#     fully exhaust (consonant doubling, drop-e, y-alternations,
+#     voicing-allomorph variants).
+#
+# Note on "heaf -> heafs|heaves": Berko's empirical finding was that
+# English-speaking children produce "heafs", showing they do NOT extend
+# the f->v alternation (leaf->leaves) to novel words. A neural model may
+# or may not generalize the rule. Both answers are accepted for scoring.
+# ----------------------------------------------------------------------
+
+# ===== PLURAL =====
+wug	wugs	PLURAL	[Berko] -z allomorph after voiced C
+tor	tors	PLURAL	[Berko] -z allomorph
+lun	luns	PLURAL	[Berko] -z allomorph
+cra	cras	PLURAL	[Berko] -z allomorph after vowel
+niz	nizzes	PLURAL	[Berko] -əz allomorph after sibilant
+tass	tasses	PLURAL	[Berko] -əz allomorph after /s/
+gutch	gutches	PLURAL	[Berko] -əz allomorph after /tʃ/
+kazh	kazhes	PLURAL	[Berko] -əz allomorph after /ʒ/
+heaf	heafs|heaves	PLURAL	[Berko] tests f->v rule; Berko found children say "heafs"
+bodde	boddes	PLURAL	-s after consonant
+nung	nungs	PLURAL	-z after nasal
+chuk	chuks	PLURAL	-s after voiceless C
+soo	soos	PLURAL	-z after vowel
+boddy	boddies	PLURAL	consonant-y -> ies
+
+# ===== 3SG (verb) =====
+spow	spows	3SG	-z after vowel
+mot	mots	3SG	-s after voiceless C
+bod	bods	3SG	-z after voiced C
+rick	ricks	3SG	-s after voiceless cluster
+gling	glings	3SG	-z after nasal
+bing	bings	3SG	-z after nasal
+niz	nizzes	3SG	-əz after sibilant
+gutch	gutches	3SG	-əz after /tʃ/
+pry	pries	3SG	consonant-y -> ies
+blay	blays	3SG	vowel-y, no change
+
+# ===== PAST =====
+spow	spowed	PAST	[Berko] -d allomorph after vowel
+mot	motted	PAST	[Berko] consonant doubling + -əd
+bod	bodded	PAST	[Berko] consonant doubling + -əd
+rick	ricked	PAST	[Berko] -t allomorph after voiceless
+gling	glinged	PAST	[Berko] -d after nasal
+bing	binged	PAST	[Berko] -d after nasal
+nope	noped	PAST	drop e + d
+zip	zipped	PAST	consonant doubling
+pry	pried	PAST	consonant-y -> ied
+blay	blayed	PAST	vowel-y, no change
+
+# ===== GERUND =====
+spow	spowing	GERUND	just add -ing
+mot	motting	GERUND	consonant doubling
+rick	ricking	GERUND	no doubling (cluster)
+gling	glinging	GERUND	no doubling (nasal+g)
+nope	noping	GERUND	drop e + ing
+zip	zipping	GERUND	consonant doubling
+pry	prying	GERUND	NO y->ie for -ing (key contrast with 3SG/PAST)
+blay	blaying	GERUND	vowel-y, no change
+bod	bodding	GERUND	consonant doubling
+chuk	chukking	GERUND	consonant doubling

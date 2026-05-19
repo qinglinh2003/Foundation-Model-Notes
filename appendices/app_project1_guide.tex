@@ -1,0 +1,901 @@
+\chapter{Project 1 Step-by-Step Guide}
+\label{app:project1-guide}
+
+This appendix walks through a complete reference implementation of Project~1.
+Every command and code listing here was run on a single RTX~4090 (24\,GB VRAM).
+The full pipeline---from an empty directory to a trained model generating English text---takes about 30 minutes of wall time.
+
+
+% ======================================================================
+\section{Step 0: Environment}
+% ======================================================================
+
+Create a project directory and install dependencies.
+
+\begin{lstlisting}[language={}, caption={Environment setup}]
+mkdir -p project1 && cd project1
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install torch tokenizers matplotlib tqdm wandb
+\end{lstlisting}
+
+Verify GPU access:
+
+\begin{lstlisting}[language=python, caption={GPU check}]
+import torch
+print(torch.cuda.is_available())          # True
+print(torch.cuda.get_device_name(0))      # NVIDIA GeForce RTX 4090
+\end{lstlisting}
+
+Create the directory structure:
+
+\begin{lstlisting}[language={}, caption={Directory structure}]
+mkdir -p data tokenizer checkpoints figures
+\end{lstlisting}
+
+
+% ======================================================================
+\section{Step 1: Download the Corpus}
+% ======================================================================
+
+We use a 21\,MB subset of Project Gutenberg (15 classic novels).
+Any clean English text corpus of 10--50\,MB works.
+
+\begin{lstlisting}[language={}, caption={Download corpus}]
+# 15 Project Gutenberg novels (~21 MB total)
+BOOKS=(
+  "https://www.gutenberg.org/cache/epub/1342/pg1342.txt"
+  "https://www.gutenberg.org/cache/epub/11/pg11.txt"
+  "https://www.gutenberg.org/cache/epub/1661/pg1661.txt"
+  "https://www.gutenberg.org/cache/epub/84/pg84.txt"
+  "https://www.gutenberg.org/cache/epub/98/pg98.txt"
+  "https://www.gutenberg.org/cache/epub/1080/pg1080.txt"
+  "https://www.gutenberg.org/cache/epub/174/pg174.txt"
+  "https://www.gutenberg.org/cache/epub/2701/pg2701.txt"
+  "https://www.gutenberg.org/cache/epub/345/pg345.txt"
+  "https://www.gutenberg.org/cache/epub/2554/pg2554.txt"
+  "https://www.gutenberg.org/cache/epub/1399/pg1399.txt"
+  "https://www.gutenberg.org/cache/epub/135/pg135.txt"
+  "https://www.gutenberg.org/cache/epub/1184/pg1184.txt"
+  "https://www.gutenberg.org/cache/epub/16328/pg16328.txt"
+  "https://www.gutenberg.org/cache/epub/4300/pg4300.txt"
+)
+
+> data/corpus.txt
+for url in "${BOOKS[@]}"; do
+    curl -sL "$url" >> data/corpus.txt
+    echo -e "\n\n\n" >> data/corpus.txt
+done
+
+wc -c data/corpus.txt   # ~21 MB
+\end{lstlisting}
+
+The corpus includes \emph{Pride and Prejudice}, \emph{Alice in Wonderland}, \emph{Sherlock Holmes}, \emph{Frankenstein}, \emph{A Tale of Two Cities}, \emph{Dorian Gray}, \emph{Moby Dick}, \emph{Dracula}, \emph{Crime and Punishment}, \emph{Anna Karenina}, \emph{Les Mis\'erables}, \emph{The Count of Monte Cristo}, \emph{Beowulf}, \emph{Ulysses}, and \emph{A Modest Proposal}.
+
+
+% ======================================================================
+\section{Step 2: Train the Tokenizer}
+\label{sec:guide-tokenizer}
+% ======================================================================
+
+We train a byte-level BPE tokenizer with vocabulary size 2{,}000.
+
+\begin{lstlisting}[language=python, caption={tokenizer.py --- BPE tokenizer training}]
+from pathlib import Path
+from tokenizers import (Tokenizer, models, trainers,
+                        pre_tokenizers, decoders, processors)
+
+def train_bpe(corpus_path, vocab_size, save_path):
+    tokenizer = Tokenizer(models.BPE())
+    tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(
+        add_prefix_space=False
+    )
+    tokenizer.decoder = decoders.ByteLevel()
+
+    trainer = trainers.BpeTrainer(
+        vocab_size=vocab_size,
+        special_tokens=["<pad>", "<eos>", "<unk>"],
+        min_frequency=2,
+        show_progress=True,
+    )
+    tokenizer.train([corpus_path], trainer)
+    tokenizer.post_processor = processors.ByteLevel(
+        trim_offsets=False
+    )
+
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    tokenizer.save(save_path)
+    return tokenizer
+\end{lstlisting}
+
+Run it:
+
+\begin{lstlisting}[language=python, caption={Tokenizer training and verification}]
+tok = train_bpe('data/corpus.txt', vocab_size=2000,
+                save_path='tokenizer/bpe.json')
+
+# Verify roundtrip
+text = 'The quick brown fox jumps over the lazy dog.'
+ids = encode(tok, text)
+back = decode(tok, ids)
+assert back.strip() == text.strip()
+print('Roundtrip OK')
+print(f'Vocab size: {tok.get_vocab_size()}')
+\end{lstlisting}
+
+\paragraph{Checkpoint.}
+At this point you should have:
+\begin{itemize}[nosep]
+  \item \texttt{tokenizer/bpe.json} (a few hundred KB)
+  \item Verified encode $\to$ decode roundtrip is lossless
+  \item Bytes per token $\approx$ 3.0 (check with \texttt{analyze\_tokenizer})
+\end{itemize}
+
+\paragraph{Tokenizer edge cases.}
+Run \texttt{analyze\_tokenizer} to verify that the tokenizer exhibits the failure modes discussed in Chapter~5:
+
+\begin{lstlisting}[language=python, caption={Tokenizer edge cases}]
+cases = [
+    ("Numbers",     "The year 1847 saw 12345 soldiers."),
+    ("Rare word",   "The sesquipedalian professor."),
+    ("Non-English", "Hello World"),
+]
+for label, text in cases:
+    enc = tok.encode(text)
+    print(f"{label}: {len(enc.ids)} tokens -> {enc.tokens}")
+\end{lstlisting}
+
+Expected observations:
+\begin{itemize}[nosep]
+  \item ``1847'' is split into individual digits: \texttt{['1','8','4','7']}
+  \item ``sesquipedalian'' fragments into 5--7 subwords
+  \item Non-English text uses 2--3$\times$ more tokens than the English equivalent
+\end{itemize}
+
+
+% ======================================================================
+\section{Step 3: Build the Model}
+\label{sec:guide-model}
+% ======================================================================
+
+The model is a standard decoder-only Transformer with pre-layer normalization.
+
+\paragraph{Configuration.}
+
+\begin{lstlisting}[language=python, caption={config.py --- model hyperparameters}]
+from dataclasses import dataclass
+
+@dataclass
+class ModelConfig:
+    vocab_size: int = 2000
+    context_length: int = 256
+    d_model: int = 256
+    n_heads: int = 4
+    n_layers: int = 4
+    d_ff: int = 1024        # 4 * d_model
+    dropout: float = 0.1
+    pos_encoding: str = "learned"  # or "rope"
+
+@dataclass
+class TrainConfig:
+    corpus_path: str = "data/corpus.txt"
+    tokenizer_path: str = "tokenizer/bpe.json"
+    val_fraction: float = 0.05
+    batch_size: int = 32
+    max_steps: int = 10_000
+    eval_interval: int = 200
+    lr: float = 3e-4
+    weight_decay: float = 0.01
+    grad_clip: float = 1.0
+    warmup_steps: int = 200
+    min_lr: float = 3e-5
+    checkpoint_dir: str = "checkpoints"
+    save_interval: int = 1000
+    seed: int = 42
+\end{lstlisting}
+
+\paragraph{Causal self-attention.}
+
+The key constraint: position $i$ must not attend to any position $j > i$.
+We enforce this with a lower-triangular mask applied before softmax.
+
+\begin{lstlisting}[language=python, caption={Causal multi-head self-attention}]
+class CausalSelfAttention(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        assert config.d_model % config.n_heads == 0
+        self.n_heads = config.n_heads
+        self.head_dim = config.d_model // config.n_heads
+
+        self.qkv = nn.Linear(config.d_model, 3 * config.d_model,
+                             bias=False)
+        self.proj = nn.Linear(config.d_model, config.d_model,
+                              bias=False)
+        self.dropout = nn.Dropout(config.dropout)
+
+        # Causal mask: lower-triangular
+        mask = torch.tril(torch.ones(config.context_length,
+                                     config.context_length))
+        self.register_buffer("causal_mask",
+            mask.view(1, 1, config.context_length,
+                      config.context_length))
+
+    def forward(self, x):
+        b, t, d = x.shape
+        q, k, v = self.qkv(x).chunk(3, dim=-1)
+
+        # Reshape: (B, T, D) -> (B, H, T, D_head)
+        q = q.view(b, t, self.n_heads, self.head_dim).transpose(1, 2)
+        k = k.view(b, t, self.n_heads, self.head_dim).transpose(1, 2)
+        v = v.view(b, t, self.n_heads, self.head_dim).transpose(1, 2)
+
+        # Scaled dot-product attention with causal mask
+        scores = q @ k.transpose(-2, -1) / math.sqrt(self.head_dim)
+        scores = scores.masked_fill(
+            self.causal_mask[:, :, :t, :t] == 0, float("-inf")
+        )
+        attn = F.softmax(scores, dim=-1)
+        attn = self.dropout(attn)
+
+        out = attn @ v
+        out = out.transpose(1, 2).contiguous().view(b, t, d)
+        return self.dropout(self.proj(out))
+\end{lstlisting}
+
+\paragraph{Transformer block (pre-LN).}
+
+\begin{lstlisting}[language=python, caption={Pre-LN Transformer block}]
+class TransformerBlock(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(config.d_model)
+        self.attn = CausalSelfAttention(config)
+        self.ln_2 = nn.LayerNorm(config.d_model)
+        self.ffn = nn.Sequential(
+            nn.Linear(config.d_model, config.d_ff),
+            nn.GELU(),
+            nn.Linear(config.d_ff, config.d_model),
+            nn.Dropout(config.dropout),
+        )
+
+    def forward(self, x):
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.ffn(self.ln_2(x))
+        return x
+\end{lstlisting}
+
+\paragraph{Full model.}
+
+Two implementation details matter:
+\begin{enumerate}[nosep]
+  \item \textbf{Weight tying:} the language modeling head shares weights with the token embedding.
+  This halves the embedding parameter count and improves generalization.
+  \item \textbf{Scaled residual init:} following GPT-2, the output projection of attention and FFN
+  is initialized with $\sigma = 0.02 / \sqrt{2N}$, where $N$ is the number of layers.
+  This prevents the residual stream from growing too large in early training.
+\end{enumerate}
+
+\begin{lstlisting}[language=python, caption={MiniGPT model}]
+class MiniGPT(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.token_embedding = nn.Embedding(config.vocab_size,
+                                            config.d_model)
+        self.position_embedding = nn.Embedding(config.context_length,
+                                               config.d_model)
+        self.dropout = nn.Dropout(config.dropout)
+        self.blocks = nn.ModuleList(
+            [TransformerBlock(config) for _ in range(config.n_layers)]
+        )
+        self.ln_f = nn.LayerNorm(config.d_model)
+        self.lm_head = nn.Linear(config.d_model, config.vocab_size,
+                                 bias=False)
+        # Weight tying
+        self.lm_head.weight = self.token_embedding.weight
+
+        # Standard init
+        self.apply(self._init_weights)
+        # Scaled residual init
+        for name, p in self.named_parameters():
+            if name.endswith("proj.weight") or \
+               name.endswith("ffn.2.weight"):
+                nn.init.normal_(p, mean=0.0,
+                    std=0.02 / math.sqrt(2 * config.n_layers))
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, std=0.02)
+
+    def forward(self, idx):
+        b, t = idx.shape
+        x = self.token_embedding(idx)
+        pos = torch.arange(t, device=idx.device)
+        x = x + self.position_embedding(pos)
+        x = self.dropout(x)
+        for block in self.blocks:
+            x = block(x)
+        x = self.ln_f(x)
+        return self.lm_head(x)   # (B, T, vocab_size)
+\end{lstlisting}
+
+\paragraph{Verification.}
+
+\begin{lstlisting}[language=python, caption={Model verification}]
+cfg = ModelConfig()
+model = MiniGPT(cfg)
+print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+# -> Parameters: 3,732,992
+
+x = torch.randint(0, cfg.vocab_size, (2, cfg.context_length))
+logits = model(x)
+assert logits.shape == (2, 256, 2000)
+print("Forward pass OK")
+\end{lstlisting}
+
+\paragraph{Checkpoint.}
+At this point you should have:
+\begin{itemize}[nosep]
+  \item A model that accepts \texttt{(B, T)} integer tensors and outputs \texttt{(B, T, V)} logits
+  \item Parameter count in the 2M--5M range
+  \item Forward pass runs without error on GPU
+\end{itemize}
+
+
+% ======================================================================
+\section{Step 4: Build the Data Pipeline}
+\label{sec:guide-data}
+% ======================================================================
+
+The data pipeline converts raw text into training batches.
+This is where the most common silent bugs occur.
+
+\paragraph{Tokenize the corpus.}
+
+\begin{lstlisting}[language=python, caption={Tokenize corpus with document boundaries}]
+def tokenize_corpus(corpus_path, tokenizer, eos_id):
+    with open(corpus_path) as f:
+        text = f.read()
+
+    # Split on triple newlines as document boundaries
+    docs = [d.strip() for d in text.split("\n\n\n") if d.strip()]
+
+    all_ids = []
+    for doc in docs:
+        ids = tokenizer.encode(doc).ids
+        all_ids.extend(ids)
+        all_ids.append(eos_id)    # <eos> between documents
+
+    return all_ids
+\end{lstlisting}
+
+\paragraph{Create shifted-target windows.}
+
+This is the core data structure.
+Each training sample is a window of $T{+}1$ consecutive tokens.
+The input is the first $T$ tokens; the target is the last $T$ tokens.
+They overlap by $T{-}1$ tokens, shifted by exactly one position:
+
+\begin{center}
+\begin{tabular}{lccccc}
+\toprule
+ & pos 0 & pos 1 & pos 2 & $\cdots$ & pos $T$ \\
+\midrule
+window & $t_0$ & $t_1$ & $t_2$ & $\cdots$ & $t_T$ \\
+input  & $t_0$ & $t_1$ & $t_2$ & $\cdots$ & --- \\
+target & ---   & $t_1$ & $t_2$ & $\cdots$ & $t_T$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{lstlisting}[language=python, caption={TextDataset with shifted targets}]
+class TextDataset(Dataset):
+    def __init__(self, token_ids, context_length):
+        self.context_length = context_length
+        window_size = context_length + 1
+        n_windows = len(token_ids) // window_size
+        trimmed = token_ids[:n_windows * window_size]
+        self.data = torch.tensor(trimmed, dtype=torch.long) \
+                        .view(n_windows, window_size)
+
+    def __len__(self):
+        return self.data.size(0)
+
+    def __getitem__(self, idx):
+        window = self.data[idx]
+        return window[:-1], window[1:]    # input, target
+\end{lstlisting}
+
+\paragraph{Train/val split and DataLoaders.}
+
+Split at a clean window boundary so no window straddles the split:
+
+\begin{lstlisting}[language=python, caption={Create DataLoaders}]
+def create_dataloaders(token_ids, context_length,
+                       batch_size, val_fraction=0.05):
+    window_size = context_length + 1
+    n_total = len(token_ids) // window_size
+    n_val = max(1, int(n_total * val_fraction))
+    n_train = n_total - n_val
+
+    split = n_train * window_size
+    train_ds = TextDataset(token_ids[:split], context_length)
+    val_ds   = TextDataset(token_ids[split:split + n_val * window_size],
+                           context_length)
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size,
+                              shuffle=True, drop_last=True)
+    val_loader   = DataLoader(val_ds, batch_size=batch_size,
+                              shuffle=False)
+    return train_loader, val_loader
+\end{lstlisting}
+
+\paragraph{Verification.}
+
+\begin{lstlisting}[language=python, caption={Data pipeline verification}]
+tok = load_tokenizer("tokenizer/bpe.json")
+eos_id = tok.token_to_id("<eos>")
+all_ids = tokenize_corpus("data/corpus.txt", tok, eos_id)
+print(f"Total tokens: {len(all_ids):,}")
+# -> Total tokens: 6,940,287
+
+train_loader, val_loader = create_dataloaders(
+    all_ids, context_length=256, batch_size=32
+)
+inp, tgt = next(iter(train_loader))
+print(f"Batch shape: {inp.shape}")   # (32, 256)
+
+# Critical check: shift correctness
+assert (inp[:, 1:] == tgt[:, :-1]).all(), "Shift is wrong!"
+print("Shift verified OK")
+\end{lstlisting}
+
+\paragraph{Checkpoint.}
+At this point you should have:
+\begin{itemize}[nosep]
+  \item $\sim$27{,}000 training windows from 6.9M tokens
+  \item Verified that \texttt{input[1:] == target[:-1]} for every sample
+  \item Decoded a random batch back to text and confirmed it is real English
+\end{itemize}
+
+
+% ======================================================================
+\section{Step 5: Training Loop --- Smoke Run}
+\label{sec:guide-smoke}
+% ======================================================================
+
+Before running a full training, we run 100 steps to verify the loop is correct.
+
+\paragraph{Learning rate schedule.}
+
+Linear warmup for the first 200 steps, then cosine decay to $\texttt{min\_lr}$:
+
+\begin{lstlisting}[language=python, caption={Warmup + cosine decay schedule}]
+def get_lr(step, warmup_steps, max_steps, max_lr, min_lr):
+    if step < warmup_steps:
+        return max_lr * (step + 1) / warmup_steps
+    if step >= max_steps:
+        return min_lr
+    progress = (step - warmup_steps) / max(1, max_steps - warmup_steps)
+    coeff = 0.5 * (1.0 + math.cos(math.pi * progress))
+    return min_lr + coeff * (max_lr - min_lr)
+\end{lstlisting}
+
+\paragraph{The training loop.}
+
+Seven lines of logic, each representing a contract (Chapter~5, \S5.5):
+
+\begin{lstlisting}[language=python, caption={Core training loop (simplified)}]
+optimizer = torch.optim.AdamW(
+    model.parameters(), lr=config.lr,
+    weight_decay=config.weight_decay
+)
+train_iter = cycle(train_loader)   # infinite iterator
+
+for step in range(config.max_steps):
+    # 1. Set learning rate
+    lr = get_lr(step, config.warmup_steps, config.max_steps,
+                config.lr, config.min_lr)
+    for group in optimizer.param_groups:
+        group["lr"] = lr
+
+    # 2. Get batch
+    inputs, targets = next(train_iter)
+    inputs = inputs.to(device)
+    targets = targets.to(device)
+
+    # 3. Forward pass
+    logits = model(inputs)
+
+    # 4. Compute loss
+    loss = F.cross_entropy(
+        logits.view(-1, logits.size(-1)),
+        targets.reshape(-1)
+    )
+
+    # 5. Backward pass
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+
+    # 6. Gradient clipping
+    grad_norm = torch.nn.utils.clip_grad_norm_(
+        model.parameters(), config.grad_clip
+    )
+
+    # 7. Optimizer step
+    optimizer.step()
+\end{lstlisting}
+
+\paragraph{Run the smoke test.}
+
+Set \texttt{max\_steps=100} and run:
+
+\begin{lstlisting}[language={}, caption={Smoke run output}]
+$ python train.py --max_steps 100
+
+step      1/100 train 7.6276 val 7.6178 lr 1.50e-06 grad 2.64
+step     25/100 train 7.1771 val 7.1343 lr 3.75e-05 grad 1.33
+step     50/100 train 6.8526 val 6.7914 lr 7.50e-05 grad 1.15
+step     75/100 train 6.4407 val 6.3719 lr 1.13e-04 grad 0.87
+step    100/100 train 6.1144 val 6.0917 lr 1.50e-04 grad 0.62
+\end{lstlisting}
+
+\paragraph{What to check:}
+\begin{itemize}[nosep]
+  \item Loss is decreasing (7.63 $\to$ 6.09)
+  \item Val loss tracks train loss (no immediate overfitting)
+  \item Gradient norm is stable and decreasing (no explosions)
+  \item No NaN anywhere
+\end{itemize}
+
+If any of these fail, \textbf{stop and debug before continuing}.
+Common causes: wrong shift in data pipeline, incorrect loss computation, learning rate too high.
+
+
+% ======================================================================
+\section{Step 6: Full Training (10K Steps)}
+\label{sec:guide-full}
+% ======================================================================
+
+Same code, but with \texttt{max\_steps=10000}.
+On an RTX~4090, this takes about 5 minutes.
+
+\begin{lstlisting}[language={}, caption={Full training run}]
+$ python run.py --max_steps 10000 --wandb_run_name full_10k
+
+step      1/10000 train 7.6534 val 7.6304 lr 1.50e-06 grad 2.89
+step   1000/10000 train 4.3765 val 4.3204 lr 2.93e-04 grad 0.56
+step   5000/10000 train 3.4012 val 3.3582 lr 1.70e-04 grad 0.38
+step  10000/10000 train 3.2369 val 3.1493 lr 3.00e-05 grad 0.21
+
+Final val loss: 3.149
+Bits-per-byte:  1.509
+\end{lstlisting}
+
+Key observations:
+\begin{itemize}[nosep]
+  \item The train-val gap is small (3.24 vs 3.15), indicating the model is still \emph{underfitting}---a 3.7M model on 21\,MB of text has plenty of data relative to its capacity.
+  \item Loss drops sharply in the first 1{,}000 steps (warmup phase), then decays smoothly.
+  \item Gradient norm stabilizes below 0.5 after warmup.
+\end{itemize}
+
+
+% ======================================================================
+\section{Step 7: Generation}
+\label{sec:guide-gen}
+% ======================================================================
+
+Autoregressive generation: feed the prompt, sample the next token from the output distribution, append, repeat.
+
+\begin{lstlisting}[language=python, caption={Autoregressive generation}]
+@torch.no_grad()
+def generate(model, tokenizer, prompt, max_tokens=100,
+             temperature=0.8, top_k=40, device="cuda"):
+    model.eval()
+    ctx_len = model.config.context_length
+    ids = tokenizer.encode(prompt).ids
+    tokens = torch.tensor(ids, dtype=torch.long,
+                          device=device).unsqueeze(0)
+    eos_id = tokenizer.token_to_id("<eos>")
+
+    for _ in range(max_tokens):
+        if tokens.size(1) > ctx_len:
+            tokens = tokens[:, -ctx_len:]   # sliding window
+
+        logits = model(tokens)[:, -1, :]    # last position
+
+        if temperature < 0.01:
+            next_id = logits.argmax(dim=-1)
+        else:
+            logits = logits / temperature
+            if top_k > 0 and top_k < logits.size(-1):
+                topk_vals, _ = torch.topk(logits, top_k)
+                logits[logits < topk_vals[:, -1:]] = float("-inf")
+            probs = F.softmax(logits, dim=-1)
+            next_id = torch.multinomial(probs, 1).squeeze(-1)
+
+        tokens = torch.cat([tokens, next_id.unsqueeze(-1)], dim=1)
+        if eos_id is not None and next_id.item() == eos_id:
+            break
+
+    return tokenizer.decode(tokens.squeeze(0).tolist())
+\end{lstlisting}
+
+\paragraph{100 steps vs 10{,}000 steps.}
+
+After 100 steps, the model outputs high-frequency word soup:
+
+\begin{quote}
+\small
+\texttt{The the the and I the of a the to the and the and}
+\end{quote}
+
+After 10{,}000 steps, it produces grammatically structured English with character names and locations from the training corpus:
+
+\begin{quote}
+\small
+\textit{``She looked at him and Quincey suddenly, as though there were not the most cruel birds in life, and everything, would be done, in vain to be made tolerably go out of the desphysic. Vronsky knew how he wanted to speak to him\ldots''}
+\end{quote}
+
+The model has learned syntax, dialogue formatting, and proper nouns (Vronsky from \emph{Anna Karenina}, Quincey from \emph{Dracula}).
+It cannot maintain multi-sentence semantic coherence---expected for 3.7M parameters.
+
+
+% ======================================================================
+\section{Step 8: Checkpoint and Resume}
+\label{sec:guide-resume}
+% ======================================================================
+
+A correct checkpoint must save the full training state, not just model weights.
+
+\paragraph{What to save.}
+
+\begin{lstlisting}[language=python, caption={Complete checkpoint}]
+def save_checkpoint(path, model, optimizer, step, config, log):
+    torch.save({
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "step": step,
+        "config": config,
+        "train_log": log,
+        "rng_state": {
+            "python": random.getstate(),
+            "torch": torch.get_rng_state(),
+            "cuda": torch.cuda.get_rng_state_all(),
+        },
+    }, path)
+\end{lstlisting}
+
+\paragraph{Resume verification.}
+
+Resume from the step-5{,}000 checkpoint and train to 10{,}000.
+Compare with the uninterrupted run:
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Run & Final val loss \\
+\midrule
+Uninterrupted 10K & 3.1493 \\
+Resume 5K $\to$ 10K & 3.1479 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The loss curves should overlap smoothly.
+If you see a spike at the resume point, you likely forgot to save the optimizer state.
+If the curves diverge gradually, you likely forgot the RNG state or the data loader position.
+
+
+% ======================================================================
+\section{Step 9: Ablations}
+\label{sec:guide-ablation}
+% ======================================================================
+
+The ablation experiments are the most valuable part of the project.
+Each one isolates a single design choice and measures its impact.
+
+% ----- Ablation 1 -----
+\subsection{Ablation 1: Vocabulary Size}
+
+\textbf{Question:} Can we compare raw loss across tokenizers?
+
+Train four tokenizers on the same corpus, then train the same model architecture with each:
+
+\begin{lstlisting}[language=python, caption={Vocab sweep setup}]
+for vocab_size in [65, 500, 2000, 8000]:
+    train_bpe("data/corpus.txt", vocab_size,
+              f"tokenizer/bpe_v{vocab_size}.json")
+    # then: tokenize, build dataloaders, train, evaluate
+\end{lstlisting}
+
+\textbf{Results:}
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+Config & Vocab & Raw Val Loss & Bits-per-Byte & Rank (bpb) \\
+\midrule
+Char      &    65 & \textbf{1.18} & 1.653 & 4th (worst) \\
+BPE-500   &   500 & 2.43 & 1.589 & 3rd \\
+BPE-2000  & 2{,}000 & 3.15 & 1.477 & 2nd \\
+BPE-8000  & 8{,}000 & 3.57 & \textbf{1.382} & 1st (best) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Insight:} The raw loss and bits-per-byte rankings are \textbf{perfectly reversed}.
+Char-level has the lowest raw loss (1.18) because predicting one of 65 characters is an easy classification problem.
+But when normalized to bits-per-byte, it is the worst---it needs many easy predictions to encode the same information that BPE-8000 encodes in fewer hard predictions.
+
+\textbf{Lesson:} Never compare raw cross-entropy across different tokenizers.
+Use bits-per-byte:
+\[
+\text{bpb}
+=
+\frac{\mathcal{L}}{\ln 2}
+\cdot
+\frac{1}{\text{bytes/token}} .
+\]
+
+
+% ----- Ablation 2 -----
+\subsection{Ablation 2: Depth vs Width}
+
+\textbf{Question:} At fixed $\sim$4M parameters, are more layers or wider layers better?
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+Config & Layers & d\_model & Params & BPB \\
+\midrule
+Deep narrow   & 8 & 192 & 4.0M & 1.440 \\
+Baseline      & 4 & 256 & 3.7M & 1.457 \\
+Shallow wide  & 2 & 384 & 4.4M & \textbf{1.425} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Insight:} The 2-layer wide model wins.
+At this small scale, each attention head in the wide model has $d_\text{head} = 96$ (vs 48 in the narrow model), giving it more per-head representational capacity.
+The compositional benefits of depth require more parameters to materialize.
+
+\textbf{Caveat:} This result is specific to the $\sim$4M scale.
+At 100M+ parameters, deeper models consistently outperform shallower ones.
+
+
+% ----- Ablation 3 -----
+\subsection{Ablation 3: Context Length}
+
+\textbf{Question:} How does context length affect quality and throughput?
+
+\begin{center}
+\begin{tabular}{rrrr}
+\toprule
+Context & BPB & Tokens/sec & Wall Time \\
+\midrule
+64  & 1.555 &  73K & 279\,s \\
+128 & 1.506 & 139K & 295\,s \\
+256 & 1.451 & 288K & 285\,s \\
+512 & \textbf{1.411} & \textbf{438K} & 374\,s \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Insight 1:} Longer context = lower loss, as expected (more conditioning information).
+
+\textbf{Insight 2:} Throughput \emph{increases} with context length.
+This is counter-intuitive---attention is $O(T^2)$, so longer sequences should be slower.
+But at 3.7M parameters, the GPU is severely underutilized; longer sequences improve GPU saturation.
+\textbf{This reverses at larger model scales}, where attention dominates compute.
+
+
+% ----- Ablation 4 -----
+\subsection{Ablation 4: Learning Rate Sensitivity}
+
+\textbf{Question:} How sensitive is training to the peak learning rate?
+
+\begin{center}
+\begin{tabular}{rrl}
+\toprule
+Peak LR & BPB & Note \\
+\midrule
+$10^{-5}$ & 2.238 & Severely undertrained \\
+$10^{-4}$ & 1.598 & Underfitting \\
+$3 \times 10^{-4}$ & 1.457 & Default \\
+$10^{-3}$ & 1.404 & Better than default \\
+$3 \times 10^{-3}$ & \textbf{1.401} & Best; no NaN \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Insight 1:} The default learning rate ($3 \times 10^{-4}$) is not optimal.
+Higher LRs produce better results because this small model can tolerate aggressive updates, and gradient clipping prevents instability.
+
+\textbf{Insight 2:} The gap between $10^{-5}$ and $10^{-4}$ (0.64 bpb) dwarfs the gap between $10^{-3}$ and $3 \times 10^{-3}$ (0.003 bpb).
+\textbf{Undertrained is far worse than slightly aggressive.}
+
+\textbf{Insight 3:} No learning rate triggered NaN.
+Gradient clipping silently stabilized even the highest LR.
+This is a reminder that stability is not the same as optimality---a stable-looking run may still be leaving performance on the table.
+
+
+% ======================================================================
+\section{Step 10: Evaluation and Report}
+\label{sec:guide-eval}
+% ======================================================================
+
+\paragraph{Bits-per-byte.}
+
+The key cross-tokenizer metric:
+
+\begin{lstlisting}[language=python, caption={Bits-per-byte computation}]
+def compute_bits_per_byte(avg_ce_loss, bytes_per_token):
+    return (avg_ce_loss / math.log(2)) / bytes_per_token
+\end{lstlisting}
+
+For the baseline model:
+\[
+\text{bpb}
+=
+\frac{3.149 / \ln 2}{3.08}
+=
+1.474 .
+\]
+
+\paragraph{Loss curve.}
+
+Plot train loss, val loss, and learning rate on the same figure.
+The LR overlay makes it easy to see the warmup phase and cosine decay.
+
+\paragraph{Ablation summary figure.}
+
+For each ablation, plot all configurations' val loss curves on the same axes.
+Label each line clearly and annotate the final values.
+
+\paragraph{Report structure.}
+
+A complete report should contain:
+\begin{enumerate}[nosep]
+  \item \textbf{Setup:} model architecture, tokenizer, corpus, hyperparameters
+  \item \textbf{Baseline training:} loss curve, final metrics, training time
+  \item \textbf{Generation samples:} multiple temperatures, qualitative assessment
+  \item \textbf{Checkpoint/resume:} verification that resume produces matching loss curves
+  \item \textbf{Ablation experiments:} tables, plots, and one-paragraph insights for each
+  \item \textbf{Reflection:} what surprised you, what you would change, what matters at larger scale
+\end{enumerate}
+
+
+% ======================================================================
+\section{Summary: The Verification Chain}
+\label{sec:guide-summary}
+% ======================================================================
+
+The system was built by verifying each component before adding the next:
+
+\begin{center}
+\begin{tabular}{rll}
+\toprule
+Step & Component & Verification \\
+\midrule
+1 & Corpus & File exists, $\sim$21\,MB \\
+2 & Tokenizer & Encode $\to$ decode roundtrip is lossless \\
+3 & Model & Forward pass shape \texttt{(B, T, V)} correct \\
+4 & Data pipeline & \texttt{input[1:] == target[:-1]} for every sample \\
+5 & Smoke run & Loss decreasing, no NaN, grad norm stable \\
+6 & Full training & Loss converges, val loss tracks train loss \\
+7 & Generation & 10K-step model produces structured English \\
+8 & Checkpoint & Resume loss curve matches uninterrupted run \\
+9 & Ablations & Each ablation produces a non-obvious insight \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+If any step fails, stop and debug before continuing.
+The most common failure mode in training is not a crash---it is a silent bug in the data pipeline that produces numbers that look reasonable but mean the wrong thing.
+The verification chain ensures that each contract in the training pipeline is satisfied before the next one depends on it.

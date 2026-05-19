@@ -1,0 +1,26 @@
+[
+  {
+    "name": "char_v65",
+    "val_loss": 1.1802,
+    "bits_per_byte": 1.6531,
+    "bytes_per_token": 1.03
+  },
+  {
+    "name": "bpe_v500",
+    "val_loss": 2.4318,
+    "bits_per_byte": 1.5875,
+    "bytes_per_token": 2.21
+  },
+  {
+    "name": "bpe_v2000",
+    "val_loss": 3.1524,
+    "bits_per_byte": 1.4766,
+    "bytes_per_token": 3.08
+  },
+  {
+    "name": "bpe_v8000",
+    "val_loss": 3.5727,
+    "bits_per_byte": 1.3818,
+    "bytes_per_token": 3.73
+  }
+]

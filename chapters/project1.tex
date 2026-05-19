@@ -1,0 +1,193 @@
+\chapter*{Project 1: Train a MiniGPT from Scratch}
+\addcontentsline{toc}{chapter}{Project 1: Train a MiniGPT from Scratch}
+\label{project:minigpt}
+
+\begin{center}
+\textit{``A correct model plus a broken pipeline is just an expensive random number generator.''}\\[0.5em]
+--- Chapter~\ref{ch:tokens-to-training}
+\end{center}
+
+\bigskip
+
+\noindent You have studied attention mechanics (Chapter~\ref{ch:attention}), built a decoder-only Transformer on paper (Chapter~\ref{ch:decoder-only}), compared it with a bidirectional encoder (Chapter~\ref{ch:bert}), and traced the full training pipeline from tokenization to checkpointing (Chapter~\ref{ch:tokens-to-training}). In the labs you diagnosed rank collapse, residual ablation effects, representation quality, and training pipeline failures.
+
+Now you build the whole system yourself.
+
+\section*{Goal}
+
+Implement, train, and analyze a small decoder-only language model from scratch. The model should be small enough that you can afford to be wrong several times---the emphasis is on \textbf{correctness, diagnostics, and understanding}, not on achieving the lowest perplexity.
+
+\medskip
+\noindent\textbf{Live demo.}\quad A trained MiniGPT from this project is available as an interactive demo at \url{https://qinglinh.com/capstone/demo.html}. Try different prompts, temperatures, and top-$k$ values to build intuition for how a 3.7\,M-parameter language model behaves before you build your own.
+
+\section*{What You Will Build}
+
+A complete MiniGPT training system with the following components:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Tokenizer.} Train a BPE tokenizer on your chosen corpus using the \texttt{tokenizers} library. Analyze the vocabulary: token frequency distribution, bytes-per-token, and at least one failure case (numeric splitting, rare-word fragmentation, or multilingual inefficiency).
+
+  \item \textbf{Model.} A decoder-only Transformer implemented in PyTorch. Causal attention mask, learned or rotary positional embeddings, pre-layer normalization, and a language modeling head. You may reference Lab~3 for architecture intuition, but your implementation must be written independently.
+
+  \item \textbf{Data pipeline.} Tokenize the corpus, split into non-overlapping context windows with \texttt{<eos>} boundaries, construct shifted input/target pairs, and build a DataLoader with shuffled batches.
+
+  \item \textbf{Training loop.} Forward pass, cross-entropy loss, backward pass, gradient clipping, AdamW step, learning rate schedule (warmup + cosine decay), and validation evaluation. The loop must log training loss, validation loss, learning rate, and gradient norm at every evaluation interval.
+
+  \item \textbf{Checkpoint and resume.} Save and load full training state: model weights, optimizer state, scheduler state, current step, and configuration. Demonstrate that a resumed run produces a loss curve consistent with an uninterrupted run.
+
+  \item \textbf{Generation.} Autoregressive text generation with temperature scaling and top-$k$ sampling. Generate samples at temperatures 0.5, 0.8, and 1.2 from the same prompt.
+
+  \item \textbf{One ablation experiment.} Choose one of the following and run a controlled comparison:
+  \begin{itemize}[nosep]
+    \item Depth vs.\ width (e.g., 4 layers $\times$ 384 dim vs.\ 8 layers $\times$ 256 dim, matched parameter count)
+    \item Vocabulary size (e.g., 512 vs.\ 2000 vs.\ 8000, compared via bits-per-byte)
+    \item Positional embedding (learned absolute vs.\ RoPE)
+    \item Learning rate schedule (constant vs.\ warmup + cosine)
+  \end{itemize}
+\end{enumerate}
+
+
+\section*{Dataset Requirements}
+
+\begin{itemize}[nosep]
+  \item Minimum 5\,MB of clean text. Tiny Shakespeare (1\,MB) may be used for smoke testing but not as the final corpus.
+  \item Recommended: 10--50\,MB. Project Gutenberg subset, WikiText, OpenWebText subset, or a domain corpus of your choice.
+  \item Train/validation split: at least 5\% held out for validation.
+  \item Document boundaries must be marked with \texttt{<eos>} tokens.
+\end{itemize}
+
+
+\section*{Compute Constraints}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Parameter count & 1\,M -- 10\,M (recommended 2\,M -- 5\,M) \\
+Context length & 128 -- 256 tokens \\
+Precision & fp32 (default); bf16 optional \\
+GPU & Single GPU, RTX 4090 or equivalent \\
+Final training run & $\leq$ 30 minutes \\
+Smoke test & Must complete in $\leq$ 5 minutes \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The model should be small enough that you can run your full training pipeline, discover a bug, fix it, and retrain---multiple times within a single working session. If your final run takes longer than 30 minutes, reduce the model size or training steps.
+
+
+\section*{Deliverables}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Code.} All source files, organized and runnable. A single command (or short script) should reproduce the final training run from scratch.
+
+  \item \textbf{Loss curves.} Training loss and validation loss vs.\ step, plotted on the same axes. Annotate the learning rate schedule on a secondary y-axis or a separate panel.
+
+  \item \textbf{Generated samples.} At least 3 prompts $\times$ 3 temperatures. Include both successful and failed examples.
+
+  \item \textbf{Tokenizer analysis.} Vocabulary statistics, bytes-per-token, and at least one documented failure case.
+
+  \item \textbf{Ablation results.} Loss curves or final metrics for your chosen ablation, with a written explanation of what the comparison reveals.
+
+  \item \textbf{Checkpoint demonstration.} Show that a resumed run's loss curve is consistent with an uninterrupted baseline.
+
+  \item \textbf{Report.} A concise written analysis (2--4 pages) covering:
+  \begin{itemize}[nosep]
+    \item Architecture choices and their justification
+    \item Tokenizer analysis and failure cases
+    \item Training stability: did you encounter NaN, loss spikes, or mode collapse? How did you diagnose and fix them?
+    \item Ablation findings
+    \item What would you change if you had 10$\times$ the compute budget?
+  \end{itemize}
+\end{enumerate}
+
+
+\section*{Evaluation Rubric}
+
+\begin{center}
+\begin{tabular}{lcp{8cm}}
+\toprule
+\textbf{Criterion} & \textbf{Weight} & \textbf{Full marks} \\
+\midrule
+Model implementation & 25\% & Correct decoder-only Transformer; forward pass produces expected shapes; causal mask verified \\
+Training pipeline & 25\% & Stable training to convergence; proper shifted targets; gradient clipping; AdamW with warmup + cosine \\
+Checkpoint \& resume & 10\% & Full state saved and loaded; resumed curve matches uninterrupted baseline \\
+Generation & 10\% & Autoregressive sampling works; temperature effects visible; coherent short text at $T{=}0.8$ \\
+Tokenizer analysis & 10\% & Vocabulary statistics reported; bits-per-byte computed; at least one failure case documented \\
+Ablation experiment & 10\% & Controlled comparison with matched variables; clear result; reasonable interpretation \\
+Report quality & 10\% & Clear writing; figures readable; claims supported by evidence; diagnostic reasoning visible \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+
+\section*{Starter Code}
+
+A skeleton is provided in \texttt{projects/project1/}:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{File} & \textbf{What you implement} \\
+\midrule
+\texttt{config.py} & Hyperparameter defaults (provided) \\
+\texttt{tokenizer.py} & \texttt{train\_bpe()}, \texttt{encode()}, \texttt{decode()} \\
+\texttt{model.py} & \texttt{MiniGPT} class: embedding, Transformer blocks, LM head \\
+\texttt{data.py} & Corpus loading, chunking, shifted targets, DataLoader \\
+\texttt{train.py} & Training loop, optimizer, scheduler, logging, checkpoint \\
+\texttt{generate.py} & Autoregressive generation with temperature and top-$k$ \\
+\texttt{evaluate.py} & Validation loss, bits-per-byte, sample generation \\
+\texttt{run.py} & Entry point: ties all components together \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Each file contains function signatures, docstrings, and \texttt{\# TODO} markers. The core logic is yours to implement. You may use \texttt{torch}, \texttt{tokenizers}, \texttt{matplotlib}, and standard library modules. Do not use \texttt{transformers} model classes---the point is to build the model yourself.
+
+
+\section*{Common Failure Modes}
+
+These are the bugs that students hit most often. Use them as a pre-flight checklist:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Unshifted targets.} Input and target are identical $\Rightarrow$ loss $\approx$ 0 but generation produces garbage. This is the single most common silent bug (see Lab~3, Experiment~0).
+
+  \item \textbf{Wrong attention mask.} Causal mask is upper-triangular, not lower-triangular (or vice versa depending on convention). Verify by checking that position $i$ cannot attend to position $j > i$.
+
+  \item \textbf{Tokenizer--model mismatch.} The model's embedding table size must match the tokenizer's vocabulary size exactly. Off-by-one errors from special tokens are common.
+
+  \item \textbf{No learning rate warmup.} Training may appear stable for 50 steps and then diverge. If the loss spikes early, add warmup before increasing other hyperparameters.
+
+  \item \textbf{Incomplete checkpoint.} Saving only model weights and forgetting optimizer/scheduler state. The resumed run will spike or follow a different LR trajectory (see Lab~5, Experiment~2).
+
+  \item \textbf{Context window off-by-one.} If your context window is 256 tokens, the input should be tokens $[0, \ldots, 255]$ and the target should be tokens $[1, \ldots, 256]$. The total sequence from the corpus is 257 tokens, not 256.
+
+  \item \textbf{Padding without masking.} If you pad sequences, the loss must ignore padding positions (\texttt{ignore\_index} in \texttt{CrossEntropyLoss}). Otherwise the model wastes capacity predicting pad tokens.
+\end{enumerate}
+
+
+\section*{Suggested Timeline}
+
+\begin{center}
+\begin{tabular}{cl}
+\toprule
+\textbf{Day} & \textbf{Milestone} \\
+\midrule
+1 & Tokenizer trained; corpus tokenized; \texttt{encode/decode} roundtrip verified \\
+2 & Model forward pass works; parameter count matches expectation \\
+3 & Data pipeline complete; one batch verified (shapes, shifted targets) \\
+4 & Training loop runs; loss decreases in first 100 steps \\
+5--6 & Full training run; debug any instability; checkpoint/resume verified \\
+7 & Generation works; samples at multiple temperatures \\
+8--9 & Ablation experiment; tokenizer analysis \\
+10 & Report writing and final polish \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\bigskip
+
+\begin{center}
+\fcolorbox{black}{gray!5}{\parbox{0.9\textwidth}{
+\textbf{Final reminder.} The goal is not the lowest loss or the most fluent generation. The goal is a training system where you understand every component, can diagnose every failure, and can explain every design choice. If your model produces mediocre text but you can explain exactly why---that is a better project than a polished model you cannot debug.
+}}
+\end{center}

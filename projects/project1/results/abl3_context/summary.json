@@ -1,0 +1,38 @@
+[
+  {
+    "name": "ctx_64",
+    "context_length": 64,
+    "params": 3683840,
+    "val_loss": 3.254771900177002,
+    "bits_per_byte": 1.5553000601145537,
+    "tokens_per_sec": 73493.85504258197,
+    "wall_time": 278.66275334358215
+  },
+  {
+    "name": "ctx_128",
+    "context_length": 128,
+    "params": 3700224,
+    "val_loss": 3.1515968561172487,
+    "bits_per_byte": 1.5059976336619565,
+    "tokens_per_sec": 138979.45590767672,
+    "wall_time": 294.71981835365295
+  },
+  {
+    "name": "ctx_256",
+    "context_length": 256,
+    "params": 3732992,
+    "val_loss": 3.036722421646118,
+    "bits_per_byte": 1.4511046272338077,
+    "tokens_per_sec": 287617.09051645116,
+    "wall_time": 284.8231301307678
+  },
+  {
+    "name": "ctx_512",
+    "context_length": 512,
+    "params": 3798528,
+    "val_loss": 2.9529776334762574,
+    "bits_per_byte": 1.411086992183013,
+    "tokens_per_sec": 438418.67345814855,
+    "wall_time": 373.70670986175537
+  }
+]

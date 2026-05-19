@@ -1,0 +1,42 @@
+# LaTeX build artifacts
+*.aux
+*.log
+*.toc
+*.out
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.synctex(busy)
+main.pdf
+
+# Build output
+dist/
+
+# Large data files (download from source)
+labs/ch01/glove.6B.100d.txt
+
+# Model checkpoints
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.ckpt
+
+# Copyrighted papers (not for redistribution)
+readings/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

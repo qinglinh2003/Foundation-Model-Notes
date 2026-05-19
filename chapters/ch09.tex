@@ -1,0 +1,32 @@
+\chapter{Data Engineering for Pretraining}
+\label{ch:data-engineering}
+
+% Part II, Chapter 9: Filtering, deduplication, mixing, packing, and
+% contamination.
+%
+% Core question: Chapter 8 told you that you need 6B tokens. Where do they
+% come from, and how do you make sure they're worth learning from?
+%
+% Planned sections:
+%   9.1  Hook: "The Model Can Only Learn What the Data Contains."
+%   9.2  Web Crawl Pipelines: Common Crawl to Clean Text
+%   9.3  Quality Filtering: Perplexity, Classifiers, and Heuristics
+%   9.4  Deduplication: Exact (MinHash) and Fuzzy
+%   9.5  Domain Mixing: Code, Math, Multilingual, and Proportions
+%   9.6  Document Packing and Attention Masks
+%   9.7  Data Curriculum: Ordering, Staging, and Annealing
+%   9.8  Data Contamination: When Training Data Leaks into Benchmarks
+%   9.9  Failure Modes in Data Engineering
+%
+% Key thesis: LLaMA's core contribution was not architecture innovation
+% (there was almost none). It was data engineering. At the same parameter
+% count, better data = better model. This is the most underrated lesson
+% of 2023--2024.
+%
+% Lab 9 (planned): Take a raw Common Crawl shard, apply filtering and dedup,
+% measure how much data survives, train two small models (raw vs cleaned),
+% compare quality.
+
+\textit{This chapter is a placeholder. It will cover web crawl pipelines,
+quality filtering, deduplication, domain mixing, document packing, data
+curriculum, and data contamination.}

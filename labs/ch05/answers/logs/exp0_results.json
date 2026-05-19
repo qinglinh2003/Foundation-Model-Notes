@@ -1,0 +1,42 @@
+{
+  "char": {
+    "vocab_size": 65,
+    "bytes_per_token": 1.0,
+    "final_val_ce": 2.1403,
+    "bits_per_token": 3.0877,
+    "bits_per_byte": 3.0877,
+    "n_params": 829824,
+    "wall_time": 49.9,
+    "sample": "First Citizen:\nNow nut the so ham a mart where jup auth.\n\nMy DULEENUS:\nThe ben nownt fith he rieds to a he coullize?\n\nWANINCED:\nWhou you, mandy stome his accen thit thert,\nThe sore tis kid hat seld the thoul? whe yo"
+  },
+  "bpe_v256": {
+    "vocab_size": 256,
+    "bytes_per_token": 1.96,
+    "final_val_ce": 3.6173,
+    "bits_per_token": 5.2186,
+    "bits_per_byte": 2.664,
+    "n_params": 854272,
+    "wall_time": 50.7,
+    "sample": "F ir st \u0120C it i z en : N ay , \u0120that \u0120b u re ad y \u0120have \u0120p art s ; \u0120and \u0120be ar s c a p r ot her \u0120 hat h y \u0120that \u0120you , S o st an t a u ght : \u0120 if \u0120you \u0120have \u0120d i re 's t ay \u0120l et \u0120all , \u0120I ' T is f t , \u0120l ad ly , \u0120we ll \u0120in \u0120the \u0120t a re \u0120the \u0120w ho ld ar c i g ain , \u0120the y ; \u0120w ould \u0120you \u0120be \u0120by \u0120your \u0120s c i re l , W hat e nd \u0120of \u0120the \u0120s er \u0120w hi ld re \u0120we \u0120to \u0120the \u0120w in k ing \u0120w ho \u0120fa ir \u0120t w s \u0120w a ge \u0120in H is s ? B R U K E \u0120 V IN C EN T IO : W hi ch \u0120I \u0120me \u0120ha r ing , \u0120you , And \u0120to \u0120the \u0120re p ea k , And \u0120w he \u0120 ' t her ! And \u0120lord \u0120to \u0120 if ter \u0120a \u0120w art . \u0120 O f ord \u0120 I \u0120a \u0120his \u0120a m ast er \u0120the m , That \u0120in \u0120that \u0120with"
+  },
+  "bpe_v1000": {
+    "vocab_size": 1000,
+    "bytes_per_token": 2.79,
+    "final_val_ce": 4.3238,
+    "bits_per_token": 6.2379,
+    "bits_per_byte": 2.2326,
+    "n_params": 949504,
+    "wall_time": 54.2,
+    "sample": "First \u0120Citizen : Here 's : A \u0120b reat he ad \u0120one \u0120to 't \u0120much , \u0120thou , \u0120hear \u0120it \u0120is \u0120my \u0120brother \u0120hath \u0120been \u0120a \u0120b od s \u0120now . QUEEN \u0120ELIZABETH : S it ion . She \u0120was , \u0120if \u0120it . KING \u0120RICHARD \u0120III : I \u0120know 's 't . BUCKINGHAM : Go , \u0120I \u0120p ea , \u0120let \u0120him , \u0120I \u0120should \u0120fear \u0120thee , \u0120by \u0120us . BUCKINGHAM : R ORK : Th ird \u0120Citizen : My \u0120lord ? KING \u0120EDWARD \u0120IV : Now , \u0120my \u0120heart \u0120by \u0120your \u0120friend . GLOUCESTER : S ir , \u0120how \u0120' tw as ure \u0120should \u0120it \u0120not \u0120not \u0120she \u0120will \u0120we \u0120to \u0120be \u0120a \u0120v i ver 's t tle \u0120with \u0120him \u0120at \u0120our \u0120re a pp er y \u0120sp ir t une \u0120to \u0120the \u0120good \u0120P ar , \u0120and \u0120thou \u0120not \u0120pr oud ly ! W ill \u0120I \u0120must \u0120speak ; But , \u0120words \u0120would \u0120speak \u0120to one , F ea \u0120are \u0120all And \u0120so , \u0120and \u0120as \u0120I \u0120will ! And \u0120at t . AN IO : My \u0120brother 's \u0120s ent \u0120and \u0120never \u0120speak ; Have \u0120his \u0120power : O , \u0120the \u0120sha me . Pro vost :"
+  },
+  "bpe_v4000": {
+    "vocab_size": 4000,
+    "bytes_per_token": 3.7,
+    "final_val_ce": 5.4542,
+    "bits_per_token": 7.8687,
+    "bits_per_byte": 2.1249,
+    "n_params": 1333504,
+    "wall_time": 68.3,
+    "sample": "First \u0120Citizen : Master , \u0120tell \u0120them \u0120the \u0120body \u0120and \u0120deserve \u0120to \u0120have 't \u0120much \u0120day \u0120ab ade \u0120me , \u0120is \u0120my \u0120husband . MISTRESS \u0120OVERDONE : We \u0120say \u0120now . POMPEY : \u0120I \u0120am ly . MENENIUS : You , \u0120if \u0120it . \u0120leads \u0120it . LUCIO : Nay , 't ? ESCALUS : Go , \u0120I \u0120knew \u0120your COMINIUS : What \u0120must \u0120bring \u0120him \u0120in \u0120Rome , \u0120by \u0120us . AUTOLYCUS : R ach . DUKE \u0120VINCENTIO : What 's \u0120the \u0120woman , \u0120the \u0120house ; \u0120you , \u0120you \u0120should \u0120by \u0120your \u0120friend . CORIOLANUS : \u0120This \u0120day , \u0120your \u0120majesty ? ISABELLA : I \u0120must \u0120not \u0120not \u0120she \u0120will \u0120we \u0120to \u0120be \u0120a \u0120man \u0120of the \u0120w id tle \u0120with \u0120him \u0120at \u0120our \u0120w art ly \u0120in \u0120the \u0120sp oward s , DU \u0120of \u0120good \u0120for \u0120the \u0120gift . MENENIUS : There \u0120is \u0120a \u0120thing \u0120he \u0120is \u0120much ; \u0120but CORIOLANUS : Well , \u0120sir , \u0120to \u0120the \u0120day \u0120of \u0120Rome \u0120are \u0120none And \u0120so : What \u0120will \u0120not \u0120nor \u0120wanton \u0120to - morrow . Third \u0120Murderer : My \u0120devil . LEONTES : We \u0120care less \u0120heard \u0120a \u0120his \u0120power . CORIOLANUS : Yes , \u0120by \u0120B arewell . \u0120But"
+  }
+}

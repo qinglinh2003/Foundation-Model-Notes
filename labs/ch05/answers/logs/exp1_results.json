@@ -1,0 +1,14 @@
+{
+  "too_high": {
+    "final_val_loss": 3.3376103242238364,
+    "wall_time": 67.8
+  },
+  "no_warmup": {
+    "final_val_loss": 1.580081323782603,
+    "wall_time": 68.2
+  },
+  "warmup_cosine": {
+    "final_val_loss": 1.653449555238088,
+    "wall_time": 68.2
+  }
+}
