@@ -33,6 +33,9 @@ __pycache__/
 .venv/
 venv/
 
+# Duplicate/original ChatGPT image files
+figures/**/ChatGPT Image*
+
 # OS
 .DS_Store
 Thumbs.db
