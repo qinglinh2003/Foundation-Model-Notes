@@ -1,7 +1,83 @@
-\chapter{Markov Decision Processes and Dynamic Programming}
-\label{ch:mdp-dp}
+\chapter{RLHF}
+\label{ch:rlhf}
 
-% TODO: Expand this chapter into full textbook content.
-% See text.tex for the detailed syllabus outline.
+% Core question: How do you use RL to align a language model to human preferences?
+%
+% Length estimate: 20-25 pages
+% Writing order: 4th (builds on Ch.13 preference data/RM + Ch.14 RL machinery)
+%
+% InstructGPT thread: MAIN CASE STUDY role. By end of this chapter, students have
+% InstructGPT as a fully-developed mental model — but understood as historical
+% foundation, not current best practice.
 
-\textit{This chapter is a placeholder. Full content will follow the structure defined in the Chapter Format section: historical motivation, core algorithm, implementation details, failure modes, exercises, research memo, and key readings.}
+\textit{Placeholder --- full content follows the section outline below.}
+
+\section{The Three-Stage Pipeline}
+\label{sec:three-stage}
+
+% InstructGPT as anchor case study: SFT -> RM -> PPO.
+% How this chapter builds on Ch.11 (SFT) and Ch.13 (RM, preference data).
+% Ch.14 provides the RL vocabulary used throughout.
+
+\section{Reward Model in the RLHF Loop}
+\label{sec:rm-in-loop}
+
+% Reference to Ch.13 reward model training.
+% RM's role during PPO: frozen scoring function.
+% RM as imperfect proxy for human preferences.
+
+\section{PPO for Language Models}
+\label{sec:ppo-lm}
+
+% Ch.14 PPO instantiated on LLM trajectories.
+% Per-token vs per-sequence reward attribution.
+% Concrete: InstructGPT hyperparameters, training details.
+% Implementation: value head, rollout buffer, mini-batch updates.
+
+\section{KL Constraint Deep Dive}
+\label{sec:kl-deep-dive}
+
+% Why KL to pi_ref is essential (building on Ch.14 §14.7).
+% Empirical pathologies without KL constraint.
+% InstructGPT ablations.
+% KL coefficient scheduling.
+
+\section{Reward Hacking and Mitigations}
+\label{sec:reward-hacking}
+
+% Over-optimization phenomenon (Gao et al. 2022 scaling law).
+% Concrete examples: length exploitation, formatting tricks.
+% Reward model ensembling.
+% KL adaptive scheduling.
+
+\section{RLHF Variants}
+\label{sec:rlhf-variants}
+
+% Constitutional AI (Anthropic): RLAIF with principles.
+% Llama-2 RLHF recipe.
+% Other production recipes.
+
+\section{Industry Retreat from Full RLHF}
+\label{sec:rlhf-retreat}
+
+% 2024+ open-source preferring SFT + DPO (callback to Ch.13 §13.13).
+% Frontier labs still using RLHF for nuanced alignment.
+% Honest framing: RLHF is operationally expensive, DPO covers 80% of use cases.
+
+\section{Why We Still Learn RLHF}
+\label{sec:why-learn-rlhf}
+
+% Conceptual foundation for Ch.16 reasoning RL.
+% Required for frontier alignment work.
+% Understanding the full pipeline gives judgment about when DPO is insufficient.
+% Forward reference to Ch.16.
+
+
+%----------------------------------------------------------------------
+% End matter
+%----------------------------------------------------------------------
+
+% \subsection*{Summary}
+% \subsection*{Pause-and-Verify Exercises}
+% \subsection*{Key Readings}
+% \subsection*{Key Equations}

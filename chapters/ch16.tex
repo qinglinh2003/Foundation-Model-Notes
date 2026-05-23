@@ -1,7 +1,108 @@
-\chapter{Model-free RL}
-\label{ch:model-free-rl}
+\chapter{Reasoning RL}
+\label{ch:reasoning-rl}
 
-% TODO: Expand this chapter into full textbook content.
-% See text.tex for the detailed syllabus outline.
+% Core question: How do you use RL to push reasoning capability beyond what
+% supervised learning can reach?
+%
+% Length estimate: 25-30 pages
+% Writing order: 5th (builds on Ch.15 RLHF)
+%
+% Key framing (from v4 review): The paradigm shift is "preference reward ->
+% verifiable reward", NOT "PPO -> GRPO". GRPO is the representative implementation,
+% not the definition of reasoning RL.
+%
+% Two-axis framework:
+%   - Reward source: human preference / AI preference / verifier / unit test /
+%     process reward / self-generated signal
+%   - Optimization algorithm: PPO / GRPO / rejection sampling / iterative DPO /
+%     self-training
 
-\textit{This chapter is a placeholder. Full content will follow the structure defined in the Chapter Format section: historical motivation, core algorithm, implementation details, failure modes, exercises, research memo, and key readings.}
+\textit{Placeholder --- full content follows the section outline below.}
+
+\section{Paradigm Shift: From Preferences to Verifiers}
+\label{sec:paradigm-shift}
+
+% The 2024 moment (o1, R1).
+% RLVR (RL with Verifiable Rewards) framing.
+% What changes when reward is objective, not subjective.
+% Core thesis: the paradigm shift is verifiable reward, not a specific algorithm.
+
+\section{Verifiable Reward Sources}
+\label{sec:verifiable-rewards}
+
+% Math (answer correctness).
+% Code (test pass rate).
+% Formal verification.
+% Why these enable cheap, scalable, reliable reward.
+% Contrast with preference-based reward (Ch.13/Ch.15): no annotator noise,
+% no reward model drift.
+
+\section{Policy Optimization for Reasoning: PPO, GRPO, and Critic-Free Variants}
+\label{sec:reasoning-optimization}
+
+% GRPO as primary case study (DeepSeek-R1):
+%   - PPO simplification: no critic network, group baseline.
+%   - Sample N responses per prompt, advantage = reward - group mean.
+%   - Why this works for reasoning tasks (sparse binary reward).
+%
+% Then zoom out to broader taxonomy:
+%   - PPO-style RLHF applied to reasoning (Ch.15 machinery + verifier reward)
+%   - Rejection sampling / best-of-N with verifier
+%   - Expert Iteration / STaR / ReST (Google)
+%   - Iterative DPO on reasoning traces
+%
+% ALGORITHM x REWARD SOURCE comparison table at end of section:
+%   Rows: PPO, GRPO, rejection sampling, iterative DPO, self-training
+%   Columns: reward source type, critic required?, key paper, typical domain
+%
+% Place table at END (concrete GRPO first, then generalize).
+
+\section{Process vs Outcome Rewards}
+\label{sec:process-outcome}
+
+% PRM: Process Reward Models (Lightman et al. 2023).
+% ORM: Outcome Reward Models.
+% Current consensus and open debate.
+% When process reward helps vs outcome reward suffices.
+
+\section{Emergent Reasoning Behaviors from RL}
+\label{sec:emergent-reasoning}
+
+% Long chain-of-thought.
+% Self-correction, backtracking.
+% These are TRAINED behaviors, not prompted (contrast with Ch.10 ICL).
+% Evidence from R1, o1 reports.
+
+\section{Reasoning Data Infrastructure}
+\label{sec:reasoning-data}
+
+% Math problem augmentation.
+% Code data with verifiers (unit test suites).
+% Synthetic reasoning trace generation.
+% Curriculum and difficulty scheduling.
+
+\section{Inference-Time Scaling}
+\label{sec:inference-scaling}
+
+% Cash out Ch.8 / Ch.10 "third axis" promise.
+% Best-of-N, majority voting, MCTS at inference.
+% How training-time RL produces models that benefit from test-time compute.
+% The compute-optimal frontier now has three axes: parameters, data, inference.
+
+\section{The Current Landscape}
+\label{sec:reasoning-landscape}
+
+% State of reasoning models (early 2026).
+% Open questions: generalization beyond math/code, process reward at scale,
+% sample efficiency.
+% Forward reference to Ch.17 frontiers.
+
+
+%----------------------------------------------------------------------
+% End matter
+%----------------------------------------------------------------------
+
+% \subsection*{Summary}
+% \subsection*{Pause-and-Verify Exercises}
+% \subsection*{Key Readings}
+% \subsection*{Key Equations}

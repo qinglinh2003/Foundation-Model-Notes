@@ -421,16 +421,17 @@ def export_pdfs() -> list[TocEntry]:
 
 
 def write_index(entries: list[TocEntry]) -> None:
-    complete_chapters = {1, 2, 3, 4, 5, 6, 7}
+    complete_chapters = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}
     complete_labs = {1, 2, 3, 4, 5}
     complete_projects = {1}
     front_titles = {"Course Overview", "Course Structure", "Study Schedule"}
     part_labels = [
         (range(1, 6), "Part I — Transformer Foundations"),
         (range(6, 11), "Part II — Engineering Pretraining at Scale"),
-        (range(11, 16), "Part III — Post-Training and Alignment"),
-        (range(16, 21), "Part IV — Multimodal and Vision-Language"),
-        (range(21, 30), "Part V — Reinforcement Learning and World Models"),
+        (range(11, 18), "Part III — Post-Training"),
+        (range(18, 22), "Part IV — World Models and Model-Based Agents"),
+        (range(22, 28), "Part V — Evaluation, VLMs, Serving, Long Context, and Intervention"),
+        (range(28, 29), "Part VI — Research Capstone"),
     ]
 
     def chapter_number(entry: TocEntry) -> int | None:

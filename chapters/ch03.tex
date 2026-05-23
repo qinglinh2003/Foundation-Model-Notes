@@ -320,29 +320,6 @@ One projection ($\mathbf{W}_{\text{gate}}$) decides \emph{which} dimensions to a
 
 The cost is a third weight matrix, so to keep the parameter budget constant, the FFN intermediate dimension shrinks from $4 d_{\text{model}}$ to $\frac{8}{3} d_{\text{model}}$. The empirical result: better quality for the same compute.
 
-\subsection{From MHA to GQA}
-\label{sec:gqa}
-
-Standard multi-head attention (MHA) has $h$ independent sets of Q, K, and V projections. During autoregressive inference, the K and V vectors for all past tokens must be cached (\S\ref{sec:kv-cache}). This \textbf{KV cache} grows linearly with both sequence length and the number of KV heads, and it often becomes the memory bottleneck during generation.
-
-\textbf{Grouped Query Attention (GQA)} addresses this by sharing K/V heads across groups of query heads. If MHA uses $h = 32$ query heads with $h = 32$ KV heads, GQA might use 32 query heads but only $n_{\text{kv}} = 8$ KV heads. Each group of 4 query heads shares the same K and V projections.
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.9\textwidth]{figures/ch03/mha_vs_gqa.png}
-  \caption{Head sharing patterns in multi-head attention variants. \textbf{Left:} Standard MHA---each query head has its own K/V head ($n_\text{kv} = h$). \textbf{Center:} GQA---groups of query heads share K/V heads ($n_\text{kv} < h$), reducing KV cache proportionally. \textbf{Right:} MQA---all query heads share a single K/V head ($n_\text{kv} = 1$), minimizing cache at the cost of potential quality loss.}
-  \label{fig:mha-gqa}
-\end{figure}
-
-The tradeoff:
-\begin{itemize}[nosep]
-  \item \textbf{KV cache shrinks by $h / n_{\text{kv}}$.} With $n_{\text{kv}} = 8$ instead of 32, KV cache is $4\times$ smaller. This directly translates to serving more concurrent users or longer contexts on the same hardware.
-  \item \textbf{Quality loss is small.} Empirically, going from MHA to GQA with $n_{\text{kv}} = h/4$ causes minimal quality degradation on standard benchmarks.
-  \item \textbf{Multi-Query Attention (MQA)} is the extreme case: $n_{\text{kv}} = 1$. All query heads share a single K and V. This minimizes cache but can noticeably hurt quality.
-\end{itemize}
-
-\paragraph{Intuition checkpoint.} If a 7B model with 32 KV heads needs about 2.1\,GB of KV cache at context length 4096, how much would GQA with 8 KV heads need? (Answer: roughly $2.1 / 4 \approx 0.5$\,GB---a $4\times$ reduction that directly translates to longer contexts or more concurrent users on the same hardware.)
-
 \subsection{Normalization Placement: Pre-Norm vs.\ Post-Norm}
 
 Chapter~\ref{ch:attention} introduced pre-norm, where LayerNorm is applied \emph{before} each sub-layer. The alternative, \textbf{post-norm}, applies LayerNorm \emph{after} the residual addition:
@@ -365,7 +342,6 @@ Some recent work (e.g., DeepNorm) revisits post-norm with modified residual scal
 \begin{itemize}[nosep,leftmargin=1.5em]
   \item Wider models train more stably; deeper models compose more complex functions. Modern LLMs balance both.
   \item ReLU $\to$ GELU $\to$ SwiGLU: each step reduces dead neurons and adds gated control, at the cost of more parameters.
-  \item GQA reduces KV cache memory by sharing K/V heads, with minimal quality loss---critical for inference efficiency.
   \item Pre-norm preserves the gradient highway and trains more stably at depth.
 \end{itemize}
 \textit{Everything so far describes the model at training time, when all tokens are processed in parallel. Generation is different: the model produces one token at a time, and this changes everything about cost.}
@@ -421,10 +397,29 @@ The cache stores K and V tensors for every layer and every KV head. For a model 
   \item Total: $2 \times 32 \times 32 \times 4096 \times 128 \times 2 \approx 2.1$\,GB
 \end{itemize}
 
-Now with GQA ($n_{\text{kv}} = 8$ instead of 32): $2.1 / 4 \approx 0.5$\,GB. That is the difference between fitting on one GPU and needing two---or equivalently, between serving 4 users and serving 16 on the same hardware. GQA's value is not in training quality; it is in deployment economics.
-
 \medskip
 \noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{\textbf{Pause and verify.} The KV cache grows linearly with context length $T$. If you double the context window from 4K to 8K, how does the cache size change? What about the total attention cost of generating $T$ tokens? Are these the same scaling or different?}}
+
+\subsection{From MHA to GQA: Shrinking the Cache}
+\label{sec:gqa}
+
+The 2.1\,GB number above assumes standard multi-head attention (MHA), where each of the $h$ query heads has its own K and V projections---all $h$ sets of K/V vectors must be cached. \textbf{Grouped Query Attention (GQA)} addresses this by sharing K/V heads across groups of query heads. If MHA uses $h = 32$ query heads with $h = 32$ KV heads, GQA might use 32 query heads but only $n_{\text{kv}} = 8$ KV heads. Each group of 4 query heads shares the same K and V projections.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.9\textwidth]{figures/ch03/mha_vs_gqa.png}
+  \caption{Head sharing patterns in multi-head attention variants. \textbf{Left:} Standard MHA---each query head has its own K/V head ($n_\text{kv} = h$). \textbf{Center:} GQA---groups of query heads share K/V heads ($n_\text{kv} < h$), reducing KV cache proportionally. \textbf{Right:} MQA---all query heads share a single K/V head ($n_\text{kv} = 1$), minimizing cache at the cost of potential quality loss.}
+  \label{fig:mha-gqa}
+\end{figure}
+
+The tradeoff:
+\begin{itemize}[nosep]
+  \item \textbf{KV cache shrinks by $h / n_{\text{kv}}$.} With $n_{\text{kv}} = 8$ instead of 32, cache drops from 2.1\,GB to roughly $2.1 / 4 \approx 0.5$\,GB. That is the difference between serving 4 users and serving 16 on the same hardware.
+  \item \textbf{Quality loss is small.} Empirically, going from MHA to GQA with $n_{\text{kv}} = h/4$ causes minimal quality degradation on standard benchmarks.
+  \item \textbf{Multi-Query Attention (MQA)} is the extreme case: $n_{\text{kv}} = 1$. All query heads share a single K and V. This minimizes cache but can noticeably hurt quality.
+\end{itemize}
+
+GQA's value is not in training quality; it is in deployment economics. This is why every major open-weight model released since 2023---LLaMA-2 70B, Mistral, Qwen---uses GQA by default.
 
 \subsection{Prefill vs.\ Decode}
 
@@ -441,7 +436,8 @@ This compute-bound/memory-bound split is why inference optimization for Transfor
 \textbf{Quick Recap.}
 \begin{itemize}[nosep,leftmargin=1.5em]
   \item Naive generation recomputes everything at each step; KV cache stores past K/V to avoid redundant work.
-  \item KV cache size = $2 \times L \times n_\text{kv} \times T \times d_k$ elements. For a 7B model at 4K context: $\sim$2\,GB (MHA) or $\sim$0.5\,GB (GQA).
+  \item KV cache size = $2 \times L \times n_\text{kv} \times T \times d_k$ elements. For a 7B model at 4K context: $\sim$2\,GB (MHA).
+  \item GQA shares K/V heads across query groups, shrinking the cache by $h / n_\text{kv}$ (e.g., $4\times$ with $n_\text{kv} = 8$).
   \item Prefill is compute-bound (parallel); decode is memory-bound (sequential, one token at a time).
 \end{itemize}
 \textit{We keep saying ``7B model'' or ``70B model.'' Where do those numbers come from? How many parameters does each component contribute?}

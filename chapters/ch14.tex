@@ -1,7 +1,91 @@
-\chapter{RLHF and Reasoning RL}
-\label{ch:rlhf-reasoning}
+\chapter{RL Foundations for Language Models}
+\label{ch:rl-foundations}
 
-% TODO: Expand this chapter into full textbook content.
-% See text.tex for the detailed syllabus outline.
+% Core question: What is the minimum RL background needed to understand RLHF
+% and reasoning RL?
+%
+% Length estimate: 20-25 pages
+% Writing order: 2nd (scope directly constrains Ch.13 boxed derivation, Ch.15, Ch.16)
+%
+% Core design principle: LLM-tailored RL crash course, NOT a comprehensive RL course.
+% Develops exactly the machinery needed for Ch.15 and Ch.16, no more.
+%
+% Callback to Ch.13: "You saw the KL-constrained objective in Ch.13. Now we explain
+% why it appears naturally when you think in RL terms."
 
-\textit{This chapter is a placeholder. Full content will follow the structure defined in the Chapter Format section: historical motivation, core algorithm, implementation details, failure modes, exercises, research memo, and key readings.}
+\textit{Placeholder --- full content follows the section outline below.}
+
+\section{What RL Is and Why Language Models Use It}
+\label{sec:why-rl}
+
+% RL as learning from reward signals rather than demonstrations.
+% Why SFT + DPO isn't always enough (Ch.13 established this).
+% What RL adds: optimize for outcomes, not just imitate.
+
+\section{MDP Formalism}
+\label{sec:mdp}
+
+% State, action, reward, policy, value.
+% Bellman equation.
+% Minimal but precise treatment.
+
+\section{LLM RL Is a Degenerate MDP}
+\label{sec:llm-mdp}
+
+% State = prompt + tokens-so-far.
+% Action = next token.
+% Reward = mostly sparse, end-of-sequence.
+% Deterministic transition (appending a token).
+% "Trajectory-level bandit" framing.
+% Why standard RL simplifies dramatically for autoregressive LMs.
+
+\section{Policy Gradient}
+\label{sec:policy-gradient}
+
+% REINFORCE estimator.
+% Variance problem.
+% Baselines and advantage estimation.
+% Key equation: REINFORCE gradient.
+
+\section{Importance Sampling and Off-Policy Correction}
+\label{sec:importance-sampling}
+
+% Why off-policy matters: you generate with old policy, update with new.
+% Importance sampling ratio.
+% Variance explosion with large ratios.
+
+\section{PPO}
+\label{sec:ppo}
+
+% TRPO intuition (trust region).
+% PPO clipping mechanism.
+% GAE (Generalized Advantage Estimation).
+% Key equation: PPO-clip objective.
+% This is the algorithm Ch.15 instantiates on LLM trajectories.
+
+\section{KL Constraint to Reference Policy}
+\label{sec:kl-rl}
+
+% Why LLM RL specifically needs KL to pi_ref.
+% Reward hacking without it (concrete examples).
+% Connection to Ch.13: "This is the same KL term you saw in the DPO derivation.
+% Now you see why it appears: without it, the policy exploits the reward model."
+
+\section{What This Chapter Did Not Teach}
+\label{sec:rl-not-covered}
+
+% Honest scoping: no value-based methods (Q-learning), no model-based RL,
+% no multi-agent, no exploration theory.
+% Pointer to Sutton \& Barto, CS285, Spinning Up.
+% "This chapter gave you the vocabulary for Ch.15 and Ch.16. A full RL course
+% would give you much more."
+
+
+%----------------------------------------------------------------------
+% End matter
+%----------------------------------------------------------------------
+
+% \subsection*{Summary}
+% \subsection*{Pause-and-Verify Exercises}
+% \subsection*{Key Readings}
+% \subsection*{Key Equations}
