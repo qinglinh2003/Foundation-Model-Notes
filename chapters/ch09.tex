@@ -1,32 +1,620 @@
 \chapter{Data Engineering for Pretraining}
 \label{ch:data-engineering}
+\raggedbottom
 
-% Part II, Chapter 9: Filtering, deduplication, mixing, packing, and
-% contamination.
-%
-% Core question: Chapter 8 told you that you need 6B tokens. Where do they
-% come from, and how do you make sure they're worth learning from?
-%
-% Planned sections:
-%   9.1  Hook: "The Model Can Only Learn What the Data Contains."
-%   9.2  Web Crawl Pipelines: Common Crawl to Clean Text
-%   9.3  Quality Filtering: Perplexity, Classifiers, and Heuristics
-%   9.4  Deduplication: Exact (MinHash) and Fuzzy
-%   9.5  Domain Mixing: Code, Math, Multilingual, and Proportions
-%   9.6  Document Packing and Attention Masks
-%   9.7  Data Curriculum: Ordering, Staging, and Annealing
-%   9.8  Data Contamination: When Training Data Leaks into Benchmarks
-%   9.9  Failure Modes in Data Engineering
-%
-% Key thesis: LLaMA's core contribution was not architecture innovation
-% (there was almost none). It was data engineering. At the same parameter
-% count, better data = better model. This is the most underrated lesson
-% of 2023--2024.
-%
-% Lab 9 (planned): Take a raw Common Crawl shard, apply filtering and dedup,
-% measure how much data survives, train two small models (raw vs cleaned),
-% compare quality.
+Chapter~\ref{ch:scaling-laws} ended with a transition: ``the scaling law $L(N, D)$ treats all tokens equally---one token of Wikipedia and one of scraped HTML count the same toward $D$. Is that true?'' The answer is no, and the consequences are large.
 
-\textit{This chapter is a placeholder. It will cover web crawl pipelines,
-quality filtering, deduplication, domain mixing, document packing, data
-curriculum, and data contamination.}
+Phi-1.5, a 1.3-billion-parameter model, matched models five times its size on coding benchmarks. The architecture was a standard Transformer. The training loop was conventional. The data was not: it was curated to ``textbook quality''---filtered, synthesized, and composed to maximize learning per token~\cite{gunasekar2023phi}. The lesson was not that small models are secretly powerful. It was that \emph{data quality is a hidden scaling axis}, one that can rival the effect of doubling model size.
+
+Chapter~\ref{ch:scaling-laws} told you to train a $\sim$900M model on $\sim$18B tokens. But which 18 billion? The internet contains trillions of tokens---most of them boilerplate, spam, duplicated content, or text so low-quality that training on it actively hurts the model. The difference between a good 18 billion and a bad 18 billion can match the effect of doubling your compute budget.
+
+This chapter is about making that choice. Unlike Chapters~\ref{ch:what-changes}--\ref{ch:scaling-laws}, which taught concepts you need to \emph{understand}, this chapter teaches decisions you need to \emph{make}. For Project~2, data engineering is not preprocessing---it is the main design surface you control. Your compute budget is fixed. Your architecture is conventional. But the training distribution is yours to design.
+
+The organizing metaphor is a \textbf{data funnel}: raw web text enters at the top ($\sim$100T tokens), and a curated training corpus exits at the bottom ($\sim$10--20B tokens for Project~2). Each stage of the funnel---source selection, filtering, deduplication, mixing---drops or reshapes data, and each stage encodes choices that affect what the model can learn. Every section of this chapter corresponds to one stage of the funnel, and every section ends with a \emph{For Project~2} box that turns the general concept into a specific decision you will make.
+
+\paragraph{Running example.} We continue from Chapter~\ref{ch:scaling-laws}: a $\sim$900M model trained on $\sim$18B tokens using 4$\times$H100 for 7 days. The question is no longer ``how many tokens?'' (Chapter~\ref{ch:scaling-laws} answered that) but ``which tokens?'' At each stage of the funnel, we will trace what happens to a hypothetical 18B-token budget as it is drawn from different sources, filtered, deduplicated, and mixed.
+
+
+\subsection*{Learning Objectives}
+
+After completing this chapter, you should be able to:
+
+\begin{enumerate}
+  \item Describe the major sources of pretraining data (web crawl, curated text, code, synthetic) and their typical quality--volume trade-offs.
+  \item Explain how rule-based and model-based quality filters work, and what implicit choices they encode.
+  \item Apply near-deduplication (MinHash/LSH) conceptually and explain why deduplication improves generalization, not just efficiency.
+  \item Design a data mixture for a multi-source pretraining corpus and validate it with small-scale pilot runs.
+  \item Detect training-data contamination against evaluation benchmarks using $n$-gram overlap methods.
+  \item Produce a data engineering plan for Project~2: corpus selection, mixture rationale, tokenizer choice, contamination audit, and sampling strategy.
+\end{enumerate}
+
+
+\subsection*{Notation}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Symbol} & \textbf{Meaning} \\
+\midrule
+$D$ & Number of training tokens (total data budget) \\
+$D_k$ & Number of tokens from source $k$ \\
+$w_k$ & Sampling weight for source $k$ in the mixture ($\sum_k w_k = 1$) \\
+$K$ & Number of data sources \\
+$q$ & Data quality factor (effective tokens per raw token; $q > 1$ for high-quality data) \\
+$D_{\text{eff}}$ & Effective data budget: $q \times D$ \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+
+\subsection*{Timeline}
+
+Data engineering for LLMs evolved from ``use whatever you have'' to a first-class engineering discipline in under five years.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lp{4cm}X@{}}
+\toprule
+\textbf{Year} & \textbf{Milestone} & \textbf{Significance} \\
+\midrule
+2019 & GPT-2 (WebText) & First large-scale web-filtered LLM corpus \\
+2020 & C4 / The Pile & Open-source pretraining corpora with documented pipelines \\
+2021 & Gopher (Rae et al.) & Introduced systematic quality heuristics for web data \\
+2022 & Lee et al.\ & Showed deduplication improves both efficiency and generalization \\
+2022 & Chinchilla & Implicitly demonstrated data-quantity scaling \\
+2023 & Llama-2 / Phi / Dolma & Data engineering became the primary differentiator \\
+2023 & DoReMi (Xie et al.) & Algorithmic mixing: learning optimal domain weights \\
+2024 & FineWeb / DCLM & Industrial-grade open pipelines; reproducible data engineering \\
+2024--25 & Llama-3 / DeepSeek-V3 & Data quality $>$ architecture novelty as the main lever \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+
+%======================================================================
+\section{The Hidden Optimizer}
+\label{sec:hidden-optimizer}
+
+Chapter~\ref{ch:scaling-laws} modeled loss as $L(N, D) = E + A/N^\alpha + B/D^\beta$. Both $N$ and $D$ enter symmetrically as power laws---double either one and loss drops by a predictable amount. But there is an asymmetry the equation hides: \emph{not all tokens in $D$ contribute equally.}
+
+Consider two extreme 18B-token corpora for your Project~2 run:
+
+\begin{itemize}[nosep]
+  \item \textbf{Corpus A:} 18B tokens of raw, unfiltered Common Crawl---boilerplate, cookie banners, duplicated news wires, porn spam, garbled HTML.
+  \item \textbf{Corpus B:} 18B tokens of curated, deduplicated, quality-filtered text---Wikipedia, textbooks, clean web articles, well-formatted code.
+\end{itemize}
+
+Same $N$, same $D$, same compute budget. But a model trained on Corpus~B will achieve meaningfully lower loss. FineWeb-Edu, a quality-filtered subset of Common Crawl, consistently outperforms the unfiltered superset despite containing fewer tokens~\cite{penedo2024fineweb}. Phi-1.5 (1.3B, textbook-quality data) matched Llama-2-7B on several benchmarks~\cite{gunasekar2023phi}. Data quality is a \emph{free compute multiplier}: better data effectively increases $D$ in the scaling law without costing additional FLOPs.
+
+Figure~\ref{fig:data-funnel} is the organizing schema for this chapter:
+raw web is filtered, deduplicated, mixed, and finally sampled into training
+batches.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[height=0.52\textheight]{figures/ch09/fig_data_funnel.png}
+\caption{\textbf{The data funnel.} Data engineering turns the raw web into a
+training distribution. Each stage drops, reweights, or restructures tokens:
+filtering removes low-quality documents, deduplication removes repeated
+evidence, mixing chooses the training distribution, and batching turns the
+result into a reproducible stream for Project~2.}
+\label{fig:data-funnel}
+\end{figure}
+
+Each arrow is a stage where data is dropped or reweighted. Each stage is a choice. And each choice shapes what the model can learn.
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Scaling laws treat $D$ as a number; data engineering decides what $D$ actually contains.
+  \item Project~2's 18B-token budget is tiny compared with the raw web, so selection matters more than volume.
+  \item Data quality acts like a compute multiplier: same $N$, same $D$, different corpus, different model.
+\end{itemize}
+\textit{Next: where do 18 billion tokens come from?}
+\end{quickrecap}
+
+
+%======================================================================
+\section{Sources: Where Tokens Come From}
+\label{sec:data-sources}
+
+Before you can filter, deduplicate, or mix, you need raw material. Pretraining corpora draw from a handful of source categories, each with its own quality--volume trade-off.
+
+\subsection{The Source Landscape}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lrp{3cm}X@{}}
+\toprule
+\textbf{Source} & \textbf{Approx.\ tokens} & \textbf{Quality} & \textbf{Notes} \\
+\midrule
+Common Crawl (raw) & $\sim$100T+ & Low--mixed & Monthly web snapshots; the base layer of almost every LLM corpus \\
+Wikipedia & $\sim$20B & High & Encyclopedic, multilingual; heavily cited but small \\
+Books (open) & $\sim$5--10B & High & Project Gutenberg, public-domain books; copyrighted book corpora can be 100B+ but are legally fraught \\
+Code (GitHub) & $\sim$500B--1T & Mixed & Permissively licensed repos; quality varies wildly \\
+Scientific papers & $\sim$50--100B & High & arXiv, PubMed, S2ORC \\
+Math & $\sim$30--100B & High & OpenWebMath, Proof-Pile-2, FineMath; critical for reasoning \\
+Forums / Q\&A & $\sim$50--100B & Mixed & StackExchange (high), Reddit (mixed) \\
+Synthetic data & Variable & Controlled & Generated by larger models; increasingly used post-2023 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch09/fig_source_composition.png}
+\caption{\textbf{Deliberate upweighting of high-quality data sources.} Left: the natural token distribution is $>$95\% web crawl. Right: a typical pretraining mix deliberately upweights curated sources (code, Wikipedia, books, math/science) by 5--25$\times$. This costs zero extra compute but measurably improves target capabilities.}
+\label{fig:source-composition}
+\end{figure}
+
+\paragraph{Common Crawl dominates by volume.} Over 95\% of raw pretraining data originates from web crawls. But raw Common Crawl is unusable directly: it contains HTML tags, navigation menus, cookie consent banners, duplicated boilerplate, machine-translated spam, and text in dozens of scripts. Every serious pretraining corpus (C4, RefinedWeb, FineWeb, Dolma) is a \emph{processed subset} of Common Crawl, not the crawl itself.
+
+\paragraph{Curated sources are small but disproportionately valuable.} Wikipedia contributes $<$0.1\% of the raw token count but is typically upweighted 3--5$\times$ in the training mixture because of its factual density and clean formatting. Code, math, and scientific papers serve similar roles: small in volume, outsized in their contribution to specific capabilities (reasoning, instruction following, formal logic).
+
+\paragraph{Synthetic data is the newest source.} Starting with Phi-1/Phi-1.5~\cite{gunasekar2023phi}, frontier labs began using outputs from larger models (e.g., GPT-4) to generate ``textbook quality'' training data. This creates a feedback loop---model outputs become training data for the next model---with both benefits (controlled quality, targeted coverage) and risks (error propagation, mode collapse). Llama-3 and DeepSeek-V3 both use synthetic data in their mixture, though exact proportions are not disclosed.
+
+\subsection{Tokenization as a Data Decision}
+
+Chapter~\ref{ch:tokens-to-training} taught the mechanics of BPE tokenization. Here we note its role as a data engineering choice:
+
+\begin{itemize}[nosep]
+  \item \textbf{Vocabulary size affects nominal $D$.} A 32K vocab tokenizes English at $\sim$1.3 tokens/word; a 128K vocab at $\sim$1.1 tokens/word. Larger vocab $\to$ fewer tokens per document $\to$ smaller nominal $D$ for the same text, even though the information content is unchanged. This means published scaling exponents are tokenizer-specific (recall \S\ref{sec:power-laws}).
+  \item \textbf{Tokenizer training data matters.} A tokenizer trained on English-heavy data assigns 3--5$\times$ more tokens to non-English text (Chapter~\ref{ch:tokens-to-training}). This is an implicit quality filter: languages under-represented in the tokenizer training set get diluted in the model's training.
+  \item \textbf{Digit tokenization affects math capability.} GPT-2's tokenizer merges digits into multi-digit tokens (``12345'' $\to$ ``123'' + ``45''), making arithmetic unpredictable. Llama-3 tokenizes each digit individually---a deliberate data engineering choice that improves numerical reasoning.
+\end{itemize}
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
+\textbf{Pause and verify.}\quad Your 18B-token budget is $\sim$1.4\% of FineWeb-Edu's 1.3T tokens. If you sample a random 1.4\% subset, what is the probability that a specific 500-word document appears in your training set?
+
+\smallskip
+\emph{Answer:} FineWeb-Edu contains roughly 1.3B documents (averaging $\sim$1,000 tokens each). A 1.4\% sample draws $\sim$18M documents. Each specific document has a $\sim$1.4\% chance of inclusion. This means $\sim$98.6\% of FineWeb-Edu is \emph{never seen} during your training run. Your 18B tokens are a tiny window into the available data---which makes the \emph{quality} of those 18B tokens even more important than the quantity.
+}}
+
+\medskip
+For Project~2, you will almost certainly use an existing tokenizer (Llama-3 or GPT-2 BPE) rather than training your own. The choice is a trade-off: Llama-3's 128K vocab is more efficient but requires a larger embedding table ($\sim$0.5B parameters for a 4096-dim model); GPT-2's 50K vocab is less efficient but has a smaller footprint.
+
+\begin{tcolorbox}[colback=orange!5, colframe=orange!60, title=\textbf{For Project~2: Corpus and Tokenizer Choice}]
+\textbf{Corpus.} Start with one of these pre-cleaned corpora:
+\begin{itemize}[nosep]
+  \item \textbf{FineWeb-Edu} ($\sim$1.3T tokens): quality-filtered, education-focused; recommended default.
+  \item \textbf{SlimPajama} ($\sim$627B): deduplicated and cleaned RedPajama; well-documented.
+  \item \textbf{Dolma} ($\sim$3T): open, multi-source, detailed documentation~\cite{soldaini2024dolma}.
+  \item \textbf{The Stack v2} (code): if you want to include code in your mixture.
+\end{itemize}
+
+\textbf{Tokenizer.} Use an existing tokenizer matched to your architecture. If using a Llama-style architecture, use the Llama-3 tokenizer. If computational constraints are tight, GPT-2's 50K-vocab BPE is lighter.
+
+\textbf{Do not} spend more than a few hours on corpus/tokenizer selection. The decision matters, but the marginal return from agonizing over it is small compared to the mixing and validation decisions in \S\ref{sec:mixing}.
+\end{tcolorbox}
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Pretraining data comes from web crawl (volume), curated sources (quality), and synthetic data (control).
+  \item Common Crawl dominates by volume, but it must be heavily filtered before it becomes useful training data.
+  \item Tokenizer choice is a silent data decision: it changes nominal token counts, multilingual coverage, and code/math efficiency.
+\end{itemize}
+\textit{Next: from $\sim$100T raw tokens, how do you get to $\sim$10T clean tokens? By filtering.}
+\end{quickrecap}
+
+
+%======================================================================
+\section{Filtering and Deduplication}
+\label{sec:filter-dedup}
+
+The funnel's first two stages---filtering and deduplication---share a common purpose: \emph{reducing the corpus from ``everything'' to ``everything worth learning from.''} Filtering removes low-quality documents. Deduplication removes redundant ones. Together, they carve the raw material into something usable.
+
+To make the scale concrete: a single Common Crawl monthly dump contains $\sim$3--5B web pages ($\sim$250B tokens after text extraction). Historical dumps combined approach 100T+ tokens. Rule-based filtering keeps $\sim$30--50\% (removing HTML, short documents, non-target languages). Model-based quality filtering keeps another $\sim$30--50\% of the survivors (removing low-quality text). Deduplication removes $\sim$30--50\% of what remains. The combined pipeline: 100T raw $\to$ 40T after rule-based $\to$ 15T after quality filtering $\to$ $\sim$10T after dedup. That 10T is the ``clean web'' that corpora like FineWeb represent.
+
+\subsection{Filtering: Removing the Noise}
+\label{sec:filtering}
+
+Filtering operates at two levels.
+
+\paragraph{Rule-based filtering.} Fast, deterministic, and interpretable. Standard heuristics (following the Gopher pipeline~\cite{rae2021gopher}):
+
+\begin{itemize}[nosep]
+  \item \textbf{Text extraction}: strip HTML, navigation bars, headers, footers (tools: trafilatura, jusText).
+  \item \textbf{Language identification}: keep only target languages. FastText-based classifiers achieve $\sim$95\% accuracy on documents $>$50 words.
+  \item \textbf{Length filters}: drop documents shorter than $\sim$50 words or longer than $\sim$100K words.
+  \item \textbf{Repetition filters}: drop documents where any single $n$-gram accounts for $>$20\% of the text (common in scraped templates, cookie walls, auto-generated pages).
+  \item \textbf{Quality heuristics}: mean word length, fraction of alphabetic characters, stop-word density. Documents failing multiple heuristics are dropped.
+\end{itemize}
+
+These rules are simple but effective: they remove the most obviously useless content at minimal compute cost.
+
+\paragraph{Model-based filtering.} More powerful but more opaque. The standard approach:
+
+\begin{enumerate}[nosep]
+  \item Train a binary classifier on ``high-quality'' text (Wikipedia, curated references) vs.\ ``low-quality'' text (random Common Crawl samples).
+  \item Score every document in the corpus.
+  \item Keep only documents above a quality threshold (top 10--30\%).
+\end{enumerate}
+
+This is what C4, RefinedWeb, FineWeb, and Dolma all do, with variations in classifier architecture and threshold. FineWeb-Edu goes further: it trains a quality classifier specifically on ``educational'' text, producing a corpus that emphasizes explanatory, well-structured writing~\cite{penedo2024fineweb}.
+
+\begin{tcolorbox}[colback=gray!5, colframe=gray!40, title=\textbf{The Hidden Choice in Filtering}]
+\emph{Your quality filter is not neutral. It is a cultural choice disguised as engineering.}
+
+A classifier trained on Wikipedia over-represents formal English and under-represents dialectal speech, informal registers, and non-Western writing styles. A language filter that keeps ``English'' and drops ``everything else'' makes an implicit decision about who the model serves. Blocked-domain lists encode political and cultural judgments.
+
+None of these choices are wrong---they are \emph{choices}. The lesson is the same as Chapter~\ref{ch:scaling-laws}'s Kaplan--Chinchilla story: the protocol is part of the result. When you use a pre-filtered corpus for Project~2, know what was filtered and why.
+\end{tcolorbox}
+
+
+\subsection{Deduplication: Removing the Redundancy}
+\label{sec:dedup}
+
+After filtering, the corpus is cleaner but still massively redundant. The same news article appears on dozens of mirror sites. The same boilerplate paragraph (``Terms of Service'', ``About Us'') appears on millions of pages. Near-identical documents from syndicated content create pockets of repetition.
+
+\paragraph{Why deduplication matters beyond efficiency.} The intuitive argument is compute savings: why train on the same document twice? But Lee et al.\ (2022) showed something deeper~\cite{lee2022dedup}: \textbf{deduplication improves generalization, not just efficiency.} Models trained on deduplicated data achieve lower test loss at the same training compute---they learn \emph{better}, not just faster. The mechanism: repeated documents cause the model to memorize specific texts rather than learn generalizable patterns. Each gradient update on a duplicate reinforces a specific memory rather than a general regularity. Remove the duplicates and the same gradient updates serve generalization.
+
+\paragraph{Three granularities.}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lp{3.5cm}X@{}}
+\toprule
+\textbf{Method} & \textbf{What it catches} & \textbf{Trade-offs} \\
+\midrule
+Exact dedup (hash) & Identical documents & Cheap but misses near-duplicates (e.g., same article with different timestamps) \\
+Near-dedup (MinHash + LSH) & Documents sharing $>$80\% of content & Industry standard; compact per document but requires sharding or distributed processing at trillion-token scale \\
+Substring dedup (suffix array) & Shared paragraphs across documents & Catches boilerplate; expensive; Bloom-filter variants exist \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+MinHash near-deduplication is the workhorse. The algorithm:
+\begin{enumerate}[nosep]
+  \item Compute $n$-gram shingles for each document (typically 5-grams).
+  \item Hash each shingle set into a MinHash signature (a compact sketch).
+  \item Use Locality-Sensitive Hashing (LSH) to cluster documents with similar signatures.
+  \item Within each cluster, keep only one representative; drop the rest.
+\end{enumerate}
+
+The signature for one document is small---often on the order of 1\,KB for 128 hashes. The scale problem is the number of documents: a 1T-token corpus can contain hundreds of millions to more than a billion documents, so signature storage and LSH bucket lookup quickly become distributed-systems problems. The exact RAM requirement depends on shard size, signature length, and LSH parameters.
+
+On a typical Common Crawl dump, near-dedup removes 30--50\% of post-filtering documents. The combined effect of filtering + dedup: raw Common Crawl is reduced to $\sim$5--15\% of original volume.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.85\textwidth]{figures/ch09/fig_dedup_impact.png}
+\caption{\textbf{Deduplication improves generalization, not just efficiency.} Left: a duplicated corpus concentrates gradients on repeated content, creating narrow memorization optima. Right: after dedup, the same compute budget is spread across diverse documents, producing a broader, smoother loss landscape. Same token count. Better generalization.}
+\label{fig:dedup-impact}
+\end{figure}
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
+\textbf{Pause and verify.}\quad Why does removing duplicates improve \emph{generalization} rather than just saving compute? Think about what gradient updates do when the same document is seen 100 times vs.\ 1 time.
+
+\smallskip
+\emph{Hint:} Each occurrence of a duplicate drives the model to assign higher probability to \emph{that specific text}---effectively memorizing it. The gradients from 100 copies of the same article push the model toward a sharp, narrow optimum around that article's exact wording. With dedup, those gradient updates are spread across 100 \emph{different} articles, each contributing a slightly different learning signal. The optimization landscape becomes smoother and the learned representations more general.
+}}
+
+\begin{tcolorbox}[colback=orange!5, colframe=orange!60, title=\textbf{For Project~2: Verify Your Corpus}]
+You will not build a filtering pipeline from scratch. But you must understand what your chosen corpus has already done:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Read the corpus documentation.} FineWeb, SlimPajama, and Dolma all publish detailed data cards describing their filtering and dedup pipeline. Know what was kept and what was dropped.
+  \item \textbf{Sanity-check dedup.} Sample 10,000 documents from your subset. Compute exact hashes. If more than 1--2\% are duplicates, the corpus may not be fully deduped for your subset.
+  \item \textbf{Check for cross-source duplicates.} If you mix FineWeb + code + math, verify that the same document doesn't appear in multiple sources (e.g., a math textbook excerpt in both FineWeb-Edu and OpenWebMath).
+\end{enumerate}
+\end{tcolorbox}
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Filtering removes low-quality documents; deduplication removes repeated evidence.
+  \item Together, they reduce raw web data by $\sim$85--95\% before training ever begins.
+  \item Dedup improves generalization, not just compute efficiency: it changes \emph{what} the model learns.
+\end{itemize}
+\textit{Next: you have 10T clean, deduped tokens. Your budget is 18B. How do you choose which 18B?}
+\end{quickrecap}
+
+
+%======================================================================
+\section{Mixing: The Recipe Problem}
+\label{sec:mixing}
+
+You have multiple clean, deduplicated sources: web text, Wikipedia, code, math, scientific papers. Your training budget is 18B tokens. How do you allocate it?
+
+Think of it like designing a recipe. You have a fixed number of ingredients and a fixed cooking time. Using only flour gives you bread---functional but limited. Adding eggs, sugar, and butter in the right proportions gives you something far more capable. The ingredients cost roughly the same; the recipe is what determines the outcome. Data mixing is the recipe of pretraining: the ingredients are your data sources, the proportions are your sampling weights, and the outcome is your model's capability profile.
+
+Formally, this is the \textbf{mixing problem}: given $K$ sources with sizes $D_1, \ldots, D_K$ and a total budget $D$, choose sampling weights $w_1, \ldots, w_K$ ($\sum_k w_k = 1$) such that each training batch draws $w_k \cdot B$ tokens from source $k$.
+
+Mixing is the stage of the data funnel where you have the most agency. Filtering and dedup are largely done for you (you use a pre-cleaned corpus). But the \emph{mixing ratio} is yours to choose---and it directly shapes what your model is good at.
+
+\subsection{Why Uniform Sampling Fails}
+\label{sec:uniform-bad}
+
+The naive approach: sample proportional to source size ($w_k \propto D_k$). Let us compute what this means for our 18B-token budget. Common Crawl contributes $\sim$95\% of the raw token count, so proportional sampling allocates 17.1B tokens to web text. Wikipedia, at $\sim$0.02\% of total volume, gets roughly 3.6M tokens---about 180 Wikipedia articles. Code gets $\sim$540M tokens; math gets $\sim$36M. The model sees a handful of math proofs and a few hundred Wikipedia pages. It will be decent at general text but poor at code, math, and factual recall---because it barely saw those domains.
+
+This is why every serious pretraining mix \emph{upweights} high-quality sources relative to their natural proportion. A typical recipe~\cite{touvron2023llama}:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lrrX@{}}
+\toprule
+\textbf{Source} & \textbf{Natural \%} & \textbf{Typical mix \%} & \textbf{Upweight factor} \\
+\midrule
+Web (filtered CC) & 90\% & 65--70\% & 0.7--0.8$\times$ \\
+Code & 3\% & 8--12\% & 3--4$\times$ \\
+Wikipedia & 0.5\% & 4--5\% & 8--10$\times$ \\
+Books & 0.3\% & 3--5\% & 10--15$\times$ \\
+Math / Science & 0.2\% & 3--5\% & 15--25$\times$ \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The upweight factors are not derived from theory---they are lab folklore, refined through extensive ablation. Different labs use different ratios, and the optimal ratio depends on what downstream tasks matter.
+
+\subsection{How Labs Choose Mixtures}
+\label{sec:lab-mixtures}
+
+\paragraph{Manual heuristics (2020--2023).} GPT-3, Llama-1, and Llama-2 used manually tuned weights. The process: train several small models ($\sim$100M) on different mixtures, evaluate on a suite of benchmarks, pick the mixture that gives the best aggregate score, then commit to it for the full run. This is expensive but effective.
+
+\paragraph{Algorithmic mixing: DoReMi (2023).} Xie et al.\ proposed learning the mixture weights automatically~\cite{xie2023doremi}:
+\begin{enumerate}[nosep]
+  \item Train a small ``reference'' model on a baseline mixture.
+  \item Train a second small model that optimizes worst-case performance across domains (group distributionally robust optimization).
+  \item The weights that emerge from step 2 are the learned mixture.
+  \item Transfer these weights to the full-scale run.
+\end{enumerate}
+
+DoReMi's key insight: domains where the reference model struggles most (high excess loss) should be upweighted. This shifts the mixture toward the domains that have the most ``room to learn''---an elegant connection to active learning.
+
+\paragraph{Curriculum and annealing (2024+).} A growing trend: don't use a single mixture throughout training. Instead:
+\begin{itemize}[nosep]
+  \item \textbf{Early training}: broad, diverse mixture (maximize exposure to different domains).
+  \item \textbf{Late training (annealing)}: shift toward high-quality data (Wikipedia, textbook-like text, curated domains).
+\end{itemize}
+
+This is analogous to learning-rate scheduling: early exploration, late refinement. Llama-3's training report describes exactly this pattern: the final 5--10\% of training uses a significantly upweighted high-quality mixture. The motivation is that late-stage gradient updates have outsized influence on the model's final behavior---making the quality of late-stage data disproportionately important.
+
+
+\subsection{Data Quality as a Compute Multiplier}
+\label{sec:quality-multiplier}
+
+Chapter~\ref{ch:scaling-laws} modeled loss as $L(N, D) = E + A/N^\alpha + B/D^\beta$. But the ``$D$'' in this equation assumes all tokens are equal. A more honest model introduces a quality factor $q$:
+
+\[ L(N, D, q) \;\approx\; E + \frac{A}{N^\alpha} + \frac{B}{(q \cdot D)^\beta} \]
+
+where $q > 1$ for high-quality data and $q < 1$ for junk. This is hand-wavy---nobody can precisely measure $q$ for a given corpus---but it captures the key insight: \textbf{better data effectively multiplies your token budget.} If your data quality factor is $q \approx 2$, then 18B high-quality tokens are as good as $\sim$36B average tokens for the data-limited term of the loss.\footnote{This formulation assumes quality acts purely as a data multiplier. More sophisticated models would let quality affect the irreducible loss $E$ or the parameter exponent $\alpha$ as well; these effects are smaller and harder to measure, so the data-multiplier model is the standard simplification.}
+
+This explains three observations:
+\begin{itemize}[nosep]
+  \item Why Phi-1.5 (1.3B, $\sim$30B curated tokens) matches Llama-2-7B on some benchmarks: its effective $D$ is much larger than the raw count suggests.
+  \item Why frontier labs invest enormous human effort in data curation: it is a free compute multiplier.
+  \item Why over-training (Chapter~\ref{ch:scaling-laws}, \S\ref{sec:inference-optimal}) only works with high-quality data. Training 94$\times$ beyond Chinchilla-optimal on garbage yields garbage models. Over-training bets that the marginal tokens are still informative---which is only true if the corpus is well-curated.
+\end{itemize}
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
+\textbf{Pause and verify.}\quad Why don't frontier labs simply train on $10\times$ more Common Crawl instead of carefully curating data?
+
+\smallskip
+\emph{Hint:} Chinchilla's $\beta \approx 0.28$ means marginal tokens have diminishing returns. But this exponent was measured on curated data. On raw web, the ``best'' content is found first (by any reasonable quality metric). As you scrape deeper, the marginal token quality drops---effectively lowering $\beta$. Eventually new tokens contribute almost nothing to loss reduction, no matter how many you add. Curation raises $q$, which is a more efficient path than adding more low-$q$ tokens.
+}}
+
+
+\subsection{For Project~2: The Mixing Experiment}
+\label{sec:mixing-experiment}
+
+This is the most important practical section of this chapter. Your mixing ratio is the single data-engineering decision most likely to affect Project~2's outcome.
+
+\paragraph{Protocol.} Follow this four-step process:
+
+\begin{enumerate}
+  \item \textbf{Define 2--3 candidate mixtures.} Examples:
+  \begin{itemize}[nosep]
+    \item \textbf{Baseline}: 100\% FineWeb-Edu.
+    \item \textbf{Diverse}: 70\% FineWeb-Edu + 15\% code (The Stack) + 15\% math (OpenWebMath).
+    \item \textbf{Balanced}: 60\% FineWeb-Edu + 20\% SlimPajama + 10\% code + 10\% math.
+  \end{itemize}
+
+  \item \textbf{Train proxy models.} For each candidate, train a 50--100M model on 500M--1B tokens using the same architecture and hyperparameters. Total cost: $\sim$2--3 GPU-hours per model---well within the 10\% pilot budget from Chapter~\ref{ch:what-changes}, \S\ref{sec:pilot-runs}.
+
+  \item \textbf{Compare.}
+  \begin{itemize}[nosep]
+    \item Validation loss on a held-out subset of FineWeb.
+    \item Generation samples: prompt the model with questions, code snippets, math problems. Qualitative differences are often visible even at 50M scale.
+    \item If you have target benchmarks: quick few-shot evaluation.
+  \end{itemize}
+
+  \item \textbf{Pick and commit.} Choose the mixture that gives the best trade-off between general loss and target-task quality. Document your choice, the evidence, and why you picked it. This becomes part of your Project~2 data engineering plan.
+\end{enumerate}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/ch09/fig_mixing_experiment.png}
+\caption{\textbf{Mixing experiment: same model, same compute, different data---different capability.} Three candidate mixtures (left) produce visibly different loss curves (right). The diverse and balanced mixes outperform the baseline by margins comparable to scaling model size. This is free performance from data alone.}
+\label{fig:mixing-experiment}
+\end{figure}
+
+This protocol is exactly Chapter~\ref{ch:what-changes}'s pilot-run discipline applied to data. The cost is $<$10 GPU-hours---a small insurance premium for a decision that shapes the entire training run.
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Mixing is the data decision where Project~2 gives you the most control.
+  \item Uniform sampling over-represents web text and under-represents high-value domains such as code, math, and Wikipedia.
+  \item Upweighting curated sources costs no extra compute, but it can improve the effective value of every token you train on.
+\end{itemize}
+\textit{Next: before you evaluate your model, you need to ensure your training data has not already seen the test.}
+\end{quickrecap}
+
+
+%======================================================================
+\section{Contamination: When Evaluation Leaks Into Training}
+\label{sec:contamination}
+
+Your model just scored 85\% on MMLU. Impressive---until you discover that 3\% of MMLU questions appeared verbatim in your training data. Is the score real, or is it memorization disguised as capability?
+
+Benchmark questions live on the internet. MMLU problems appear in study guides. GSM8K word problems appear in math tutoring sites. HumanEval coding challenges appear in GitHub repositories. If your training data includes these pages---even unintentionally---your benchmark scores are inflated, and you cannot distinguish what the model \emph{learned} from what it \emph{memorized}.
+
+This is \textbf{data contamination}: the leakage of evaluation data into training data. It is the data-engineering problem with the most direct impact on evaluation integrity---and therefore on the scientific validity of your Project~2 results.
+
+\subsection{Symptoms}
+
+\begin{itemize}[nosep]
+  \item Suspiciously high scores on benchmarks that are ``easy'' to memorize (multiple-choice, short-answer).
+  \item Performance drops sharply on rephrased or perturbed versions of the same problems.
+  \item The model can complete benchmark prompts verbatim---a sign of memorization, not generalization.
+\end{itemize}
+
+\subsection{Detection}
+
+\paragraph{$n$-gram overlap.} The simplest and most common method: compute the overlap between your training corpus and each benchmark's test set using 8--13-gram matching. If a training document shares a long $n$-gram with a test question, flag it. Llama-2 and GPT-4 both report contamination checks using this approach.
+
+\paragraph{Embedding similarity.} For benchmarks where exact text overlap is unlikely but semantic overlap is possible (e.g., paraphrased problems), compute embedding similarity between training documents and test items. Flag pairs above a threshold.
+
+\paragraph{Perplexity gap.} If a benchmark question has anomalously low perplexity under the model compared to control texts of similar length and domain, the model likely saw it during training. This approach requires no access to the training corpus and is more quantitative than membership inference---Llama-3 used perplexity-based contamination analysis.
+
+\paragraph{Membership inference.} Ask the model to complete a benchmark prompt. If it can reproduce the exact answer with suspiciously high confidence, the prompt was likely in the training data. This is a post-hoc check, useful as a complement to the methods above.
+
+\subsection{Mitigation}
+
+\begin{itemize}[nosep]
+  \item \textbf{Decontamination}: remove or truncate training documents that overlap with any benchmark you plan to evaluate on. This is the data-engineering side of the solution.
+  \item \textbf{Caveat}: aggressive decontamination also removes legitimate content (e.g., a textbook discussing the same math concept as GSM8K). Over-decontamination can hurt training quality.
+  \item \textbf{Fresh benchmarks}: use recently created benchmarks (LiveBench, LMSYS Arena, fresh arXiv problems) where web contamination is unlikely. This is the evaluation-methodology side, covered in Chapter~\ref{ch:evaluation}.
+\end{itemize}
+
+\begin{tcolorbox}[colback=orange!5, colframe=orange!60, title=\textbf{For Project~2: Mandatory Contamination Check}]
+Before reporting any benchmark result in your Project~2 evaluation:
+
+\begin{enumerate}[nosep]
+  \item List every benchmark you plan to evaluate on (e.g., HellaSwag, MMLU, GSM8K, HumanEval).
+  \item For each benchmark, compute 13-gram overlap between its test set and a sample of your training corpus ($\geq$1M documents).
+  \item If overlap exceeds 1\%, either (a) remove contaminated documents from training, or (b) report the contamination rate alongside your results and interpret scores with appropriate caution.
+  \item Document the contamination check in your data engineering plan.
+\end{enumerate}
+
+This is not optional. Reporting benchmark scores on contaminated data is a scientific integrity failure---the data-engineering equivalent of $p$-hacking. Chapter~\ref{ch:evaluation} discusses evaluation methodology further.
+\end{tcolorbox}
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Contamination is evaluation data leaking into training data.
+  \item It inflates benchmark scores and turns evaluation into memorization.
+  \item For Project~2, contamination checking is mandatory, not optional.
+\end{itemize}
+\textit{Next: putting it all together into a complete Project~2 data workflow.}
+\end{quickrecap}
+
+
+%======================================================================
+\section{Project~2 Data Workflow}
+\label{sec:data-workflow}
+
+The preceding sections each contributed a decision to your Project~2 data plan. This section integrates them into an end-to-end workflow.
+
+\subsection{The Workflow}
+
+\begin{enumerate}
+  \item \textbf{Choose your corpus} (\S\ref{sec:data-sources}). Default: FineWeb-Edu. If you want code/math capabilities, add The Stack and/or OpenWebMath.
+  \item \textbf{Choose your tokenizer} (\S\ref{sec:data-sources}). Default: match your model architecture (Llama-3 tokenizer for Llama-style models).
+  \item \textbf{Verify preprocessing} (\S\ref{sec:filter-dedup}). Read the corpus documentation. Sanity-check dedup on a sample. Check for cross-source duplicates if mixing.
+  \item \textbf{Design your mixture} (\S\ref{sec:mixing}). Define 2--3 candidates. Run 50--100M proxy models. Compare loss and generation quality. Pick and document.
+  \item \textbf{Run contamination check} (\S\ref{sec:contamination}). 13-gram overlap against all planned evaluation benchmarks. Remove or flag contaminated documents.
+  \item \textbf{Prepare final dataset}. Tokenize, shuffle deterministically (fixed seed), pack into training shards. Record the shuffle seed and shard layout for reproducibility.
+  \item \textbf{Document everything}. Produce a data engineering plan (see template below).
+\end{enumerate}
+
+\subsection{Data Engineering Plan Template}
+
+Your Project~2 deliverable should include a concise data engineering plan covering:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Section} & \textbf{Contents} \\
+\midrule
+Corpus & Which corpus/corpora. Why. License status. \\
+Tokenizer & Which tokenizer. Vocab size. Why. \\
+Filtering assumptions & What filtering has already been applied (from corpus documentation). \\
+Dedup verification & Sanity-check results. Cross-source dedup if applicable. \\
+Mixture & Source weights. Rationale. Pilot experiment results (loss, generation samples). \\
+Contamination audit & Benchmarks checked. Overlap rates. Actions taken. \\
+Sampling \& reproducibility & Shuffle seed. Shard layout. Batch composition. \\
+Known limitations & What your corpus under-represents, what checks you did not run, and what risks remain. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+This plan serves two purposes: it forces you to be deliberate about data choices, and it makes your training run reproducible---anyone with the same plan and the same code can reconstruct your exact training set.
+
+\subsection{Time Budget}
+
+Data work should occupy $\sim$15--20\% of your total Project~2 time:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lrX@{}}
+\toprule
+\textbf{Task} & \textbf{Est.\ time} & \textbf{Notes} \\
+\midrule
+Corpus selection + download & 2--4 hours & Choose, download, verify \\
+Tokenization + sharding & 2--4 hours & One-time preprocessing \\
+Mixing pilot experiments & 6--12 hours & 2--3 proxy models on GPU \\
+Contamination check & 1--2 hours & CPU-only, $n$-gram matching \\
+Documentation & 1--2 hours & Write the data plan \\
+\midrule
+\textbf{Total} & \textbf{12--24 hours} & $\sim$1--1.5 days of a 7-day project \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The mixing pilot is the largest time investment, and also the highest-value one. If you must cut corners, cut corpus selection (just use FineWeb-Edu) and documentation (write it after the run). Do not skip the contamination check.
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
+\textbf{Pause and verify.}\quad You have 4$\times$H100 for 7 days, a 900M-parameter model, and an 18B-token budget. You choose FineWeb-Edu (70\%) + The Stack (20\%) + OpenWebMath (10\%). Before starting the full run, you train three 50M proxy models on 500M tokens each with different mixtures. The pilot takes $\sim$9 GPU-hours.
+
+\smallskip
+What fraction of your total compute budget is this pilot? Is it within the ``5--10\% insurance premium'' from Chapter~\ref{ch:what-changes}?
+
+\smallskip
+\emph{Answer:} 7-day total $= 4 \times 7 \times 24 = 672$ GPU-hours. Pilot $= 9$ GPU-hours $\approx 1.3\%$. This is well within the 5--10\% budget---in fact, you could afford 3--5$\times$ more piloting. The lesson: data pilots are cheap relative to the information they provide. Do not skip them to ``save time.''
+}}
+
+
+%----------------------------------------------------------------------
+\section*{Summary}
+
+\paragraph{What this chapter established.} Chapter~\ref{ch:scaling-laws} treated data as a number $D$ in a power law. This chapter opened $D$ up and showed what it actually contains---and why the composition of those tokens matters as much as their count. The chapter followed the data funnel: \emph{sources} (where tokens come from) $\to$ \emph{filtering} (what gets dropped) $\to$ \emph{deduplication} (what gets collapsed) $\to$ \emph{mixing} (how sources are weighted) $\to$ \emph{contamination} (what must not be included) $\to$ \emph{Project~2 workflow} (how to make all these decisions). Each stage is a choice that shapes what the model can learn.
+
+\paragraph{The hidden optimizer.} Data engineering is the hidden third optimizer---alongside SGD and the learning rate schedule---that determines what the model converges to. Your quality filter decides what ``good text'' means. Your mixture decides what capabilities the model develops. Your contamination check decides whether your evaluation results mean anything. These are not preprocessing steps. They are design decisions with direct consequences for the final model.
+
+\paragraph{Data choices encode values.} This chapter's epistemological lesson parallels Chapter~\ref{ch:scaling-laws}'s: just as scaling laws are measured, not discovered, data pipelines are designed, not given. The choice of quality filter, the composition of the training mixture, the decision of what languages to include---all encode assumptions about what the model should know and who it should serve. For Project~2 this is a technical concern. For production models, it is also a societal one.
+
+\paragraph{One sentence.} Data engineering is the part of pretraining where you have the most agency: your compute is fixed, your architecture is conventional, but the training distribution is yours to design.
+
+\paragraph{What comes next.} You now know how to choose model size (Chapter~\ref{ch:scaling-laws}), distribute training (Chapter~\ref{ch:distributed-training}), and curate data (this chapter). But how do you know your model \emph{works}? This chapter's contamination section hinted at the problem: a benchmark score is only meaningful if the evaluation is clean. But the challenge goes deeper. Validation loss tells you the model learned \emph{something}---but a low loss can coexist with a model that hallucinates confidently, fails at elementary reasoning, or memorizes its training data verbatim while generalizing nowhere. Chapter~\ref{ch:evaluation} asks how to measure what a model actually knows---and confronts the uncomfortable truth that our best evaluation tools are themselves imperfect.
+
+
+%----------------------------------------------------------------------
+\section*{Key Equations at a Glance}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}p{5cm}X@{}}
+\toprule
+\textbf{Quantity} & \textbf{Expression / Rule of Thumb} \\
+\midrule
+Training compute (recall) & $C \approx 6ND$ \\
+Effective data & $D_{\text{eff}} \approx q \cdot D_{\text{raw}}$ \quad ($q > 1$ for high-quality data) \\
+Filtering keep rate & $\sim$5--15\% of raw Common Crawl \\
+Dedup reduction & $\sim$30--50\% of post-filtering documents removed \\
+Contamination threshold & Flag documents with $\geq$13-gram overlap with test set \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+
+%----------------------------------------------------------------------
+\section*{Key Readings}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Penedo et al., 2024.} ``The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale.'' The most detailed public documentation of a modern web data pipeline. Start here.
+  \item \textbf{Lee et al., 2022.} ``Deduplicating Training Data Makes Language Models Better.'' Demonstrates that dedup improves generalization, not just efficiency.
+  \item \textbf{Xie et al., 2023.} ``DoReMi: Optimizing Data Mixtures by Reweighting with Domain Loss.'' The first algorithmic approach to mixture optimization.
+  \item \textbf{Rae et al., 2021.} ``Scaling Language Models: Methods, Analysis and Insights from Training Gopher.'' Introduced systematic quality heuristics for web data.
+  \item \textbf{Soldaini et al., 2024.} ``Dolma: an Open Corpus of Three Trillion Tokens for Language Model Pretraining Research.'' Open-source corpus with detailed documentation of every processing step.
+  \item \textbf{Gunasekar et al., 2023.} ``Textbooks Are All You Need.'' Demonstrates that synthetic ``textbook quality'' data can substitute for much larger corpora.
+  \item \textbf{Carlini et al., 2021.} ``Extracting Training Data from Language Models.'' The foundational work on memorization and data extraction from LLMs.
+\end{enumerate}
+
+\flushbottom

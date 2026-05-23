@@ -1,30 +1,569 @@
 \chapter{Scaling Laws and Compute Budgets}
 \label{ch:scaling-laws}
 
-% Part II, Chapter 8: Choosing model size, token count, and training duration.
-%
-% Core question: Given a fixed GPU-hour budget, how should you allocate it
-% between model size and training data?
-%
-% Planned sections:
-%   8.1  Hook: "You Have \$10M of GPU Time. How Do You Spend It?"
-%   8.2  Power Laws: Loss as a Function of N, D, and C
-%   8.3  Kaplan et al. (2020): Bigger Models Are More Sample-Efficient
-%   8.4  Chinchilla (Hoffmann 2022): Compute-Optimal Training
-%   8.5  Overtraining: Why LLaMA Trained 4x Beyond Chinchilla-Optimal
-%   8.6  Inference Cost vs Training Cost: The Deployment Tradeoff
-%   8.7  Emergent Capabilities: What Appears at Scale
-%   8.8  Pilot Runs and Scaling Predictions
-%   8.9  Failure Modes: Misreading Scaling Curves
-%
-% Key thesis: Scaling laws are not just empirical curiosities. They are
-% resource-allocation tools. The difference between a good and bad scaling
-% decision can be millions of dollars of wasted compute.
-%
-% Lab 8 (planned): Fit scaling laws from pilot runs at 3--4 model sizes,
-% predict final loss for a target compute budget, then verify.
+Chapter~\ref{ch:distributed-training} taught you how to make a training run fit on multiple GPUs and run efficiently. This chapter asks the question that logically comes first but requires the engineering foundation of Chapters~\ref{ch:what-changes}--\ref{ch:distributed-training} to answer: \emph{what run is worth doing?}
 
-\textit{This chapter is a placeholder. It will cover Kaplan scaling laws,
-Chinchilla compute-optimal training, overtraining regimes, inference vs
-training cost tradeoffs, emergent capabilities, and how to use pilot runs
-to make budget decisions.}
+GPT-3 used 175 billion parameters and 300 billion tokens. Two years later, a 70-billion-parameter model trained on 1.4 trillion tokens beat it---using roughly the same compute budget. The difference was not a better architecture or a better optimizer. It was a better answer to one question: \emph{how should I spend my FLOPs?}
+
+Think of it like a construction budget. You have \$500{,}000. You could build a sprawling single-story house with thin walls, or a compact two-story house with solid engineering. The materials cost the same either way---the question is allocation. Scaling laws are the architect's rules of thumb for how to split the budget between ``bigger model'' (more rooms) and ``more data'' (better materials). Like architectural rules of thumb, they are grounded in experience, not physics---and they update as building techniques improve.
+
+You have a fixed compute budget---whether it is 4$\times$H100 for one week (Project~2) or 16,000 GPUs for three months (a frontier lab). The model can be 100M or 100B. The data can be 1B tokens or 15T. The choice determines whether you waste your budget or land near the best model your compute can buy. Scaling laws are the tools for making that choice. They are also empirical regressions, not laws of physics---and their constants drift with every architectural and algorithmic change. This chapter teaches you how to read them, derive them, and know when they mislead.
+
+\paragraph{Running example.} We continue the thought experiment from Chapters~\ref{ch:what-changes}--\ref{ch:distributed-training}: you have 4$\times$H100 GPUs for 7 days---about $10^{21}$ FLOPs of effective compute. Should you train a 300M model on 50B tokens? A 1B model on 18B tokens? A 3B model on 6B tokens? All three cost roughly the same. By the end of this chapter, you will be able to pick the right point on this trade-off curve---and explain why production labs deliberately pick a different one.
+
+
+\subsection*{Learning Objectives}
+
+After completing this chapter, you should be able to:
+
+\begin{enumerate}
+  \item Estimate the total compute cost of a training run using the $C \approx 6ND$ approximation, and relate GPU-hours to FLOPs.
+  \item Write the power-law loss function $L(N, D) = E + A/N^\alpha + B/D^\beta$ and interpret each term.
+  \item Explain why Kaplan et al.\ (2020) and Hoffmann et al.\ (2022, ``Chinchilla'') reached opposite recommendations for compute allocation, and identify the methodological differences that caused the discrepancy.
+  \item Distinguish compute-optimal from inference-optimal training, and explain why production models are deliberately over-trained.
+  \item Apply the IsoFLOP profiling methodology to fit a scaling law from small-scale pilot runs and extrapolate to a target compute budget.
+  \item Derive a recommended model size and data budget for a given GPU-hour constraint.
+\end{enumerate}
+
+
+\subsection*{Notation}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Symbol & Meaning \\
+\midrule
+$N$ & Number of model parameters \\
+$D$ & Number of training tokens \\
+$C$ & Total compute budget (FLOPs) \\
+$L$ & Cross-entropy loss (nats/token) \\
+$E$ & Irreducible loss (data entropy lower bound) \\
+$\alpha, \beta$ & Scaling exponents for model size and data \\
+$A, B$ & Scaling coefficients \\
+$G$ & Number of GPUs \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+
+\subsection*{Timeline of Key Contributions}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Year} & \textbf{Contribution} \\
+\midrule
+2017 & Hestness et al.\ observe power-law scaling across vision, language, and speech tasks \\
+2020 & Kaplan et al.\ publish scaling laws for neural language models; conclude model size matters more than data \\
+2020 & GPT-3 (175B params, 300B tokens) trained following Kaplan-era allocation \\
+2022 & Hoffmann et al.\ (``Chinchilla'') show compute-optimal training requires equal scaling of $N$ and $D$; Chinchilla-70B beats Gopher-280B \\
+2023 & LLaMA (7B--65B) deliberately over-trains far beyond Chinchilla-optimal to reduce inference cost \\
+2023 & Sardana \& Mitchell formalize inference-aware scaling laws \\
+2024 & Snell et al.\ demonstrate test-time compute scaling as a third axis \\
+2024 & LLaMA-3 8B trains on 15T tokens ($N$:$D$ $\approx$ 1:1875)---nearly 100$\times$ beyond Chinchilla-optimal \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+
+
+%======================================================================
+\section{The Compute Allocation Problem}
+\label{sec:compute-allocation}
+%======================================================================
+
+Every training run has a cost, and that cost is dominated by one quantity: the total number of floating-point operations. If you remember one formula from this chapter, it should be the next one.
+
+\paragraph{The $6ND$ approximation.} For a dense Transformer trained with mixed-precision AdamW, the total compute for one training run is approximately:
+\[
+C \;\approx\; 6ND
+\]
+where $N$ is the number of parameters and $D$ is the number of training tokens. The factor of 6 comes from: forward pass $\approx 2N$ FLOPs per token, and backward pass $\approx 4N$ FLOPs per token (two matrix multiplications per layer---one for input gradients, one for weight gradients). The optimizer step adds only a constant FLOPs per parameter, amortized over $D$ tokens and therefore negligible.\footnote{This approximation ignores attention's $O(T^2 d)$ cost (small relative to the FFN's $O(Nd)$ at typical context lengths), embedding layers, and any activation recomputation overhead. It is an order-of-magnitude estimate, not a precise formula.}
+
+This formula transforms the training decision into a \textbf{resource allocation problem}. Given a fixed compute budget $C$, every feasible training configuration lies on the hyperbola:
+\[
+N \times D \;=\; \frac{C}{6}
+\]
+A 300M model trained on 100B tokens uses roughly the same compute as a 3B model trained on 10B tokens, or a 30B model trained on 1B tokens. The question is: which point on this hyperbola gives the lowest loss?
+
+\paragraph{Project~2 anchor budget.} Let us ground this in a concrete number. A Project~2 setup with 4$\times$H100 80\,GB GPUs, running for 7 days:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Quantity} & \textbf{Value} \\
+\midrule
+GPUs & 4 $\times$ H100 80\,GB \\
+H100 bf16 peak & 990 TFLOPS \\
+Realistic MFU & 40--50\% \\
+Effective throughput/GPU & $\sim$400--500 TFLOPS \\
+Training duration & 7 days = 604,800 seconds \\
+\textbf{Effective compute budget} & $\sim$\textbf{1.0--1.2 $\times$ 10$^{21}$} FLOPs \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This is the number that determines every decision in Project~2. We will return to it in Section~\ref{sec:scaling-project2}.
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{\textbf{Pause and verify.} Use $C = 6ND$ to check this budget against Chapter~\ref{ch:distributed-training}'s MFU discussion. If you train a 1B model ($N = 10^9$) on 18B tokens ($D = 1.8 \times 10^{10}$), the required compute is $C = 6 \times 10^9 \times 1.8 \times 10^{10} = 1.08 \times 10^{20}$ FLOPs. That is about 11\% of the 7-day budget---meaning you could afford this run \emph{and} have compute left for pilots and evaluation. Now try $N = 10^{10}$ (10B): $C = 6 \times 10^{10} \times 1.8 \times 10^{10} = 1.08 \times 10^{21}$---this would consume your entire 7-day budget on a single run with no margin for error. The budget arithmetic is the first constraint.}}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/ch08/fig_compute_hyperbola.png}
+\caption{The compute allocation landscape. For a fixed budget $C$, all feasible $(N, D)$ pairs lie on the hyperbola $ND = C/6$. Historical models are marked: GPT-3 was over-modeled (too many parameters, too little data), Chinchilla was compute-optimal, and LLaMA-2/3 were deliberately over-trained (smaller model, far more data) to amortize inference cost. The optimal point depends on what you are optimizing for.}
+\label{fig:compute-hyperbola}
+\end{figure}
+
+
+\begin{quickrecap}
+\textbf{Quick Recap.} Training compute $C \approx 6ND$. A fixed budget constrains you to a hyperbola in $(N, D)$ space. Scaling laws tell you where on that hyperbola to sit.
+
+\textit{Next: what do those scaling laws actually look like?}
+\end{quickrecap}
+
+
+
+%======================================================================
+\section{Power Laws: Reading the Scaling Curves}
+\label{sec:power-laws}
+%======================================================================
+
+The central empirical observation behind scaling laws is simple: loss decreases as a \textbf{power law} in both model size and data, with diminishing returns that never quite reach zero.
+
+\subsection{The Functional Form}
+\label{sec:loss-form}
+
+The Chinchilla parametrization~\cite{hoffmann2022training} models cross-entropy loss as a function of parameters $N$ and tokens $D$:
+\begin{equation}
+\label{eq:scaling-law}
+L(N, D) \;=\; E \;+\; \frac{A}{N^{\alpha}} \;+\; \frac{B}{D^{\beta}}
+\end{equation}
+Each term has a clear interpretation:
+
+\begin{itemize}[nosep]
+  \item $E$ is the \textbf{irreducible loss}---the entropy of the data distribution. No model, however large, can push below this floor. For natural language on a BPE tokenizer, $E \approx 1.6$--$1.8$ nats/token.
+  \item $A / N^\alpha$ is the \textbf{model-limited term}. Given infinite data, loss decreases as a power law in model size. The exponent $\alpha \approx 0.34$ means that doubling $N$ reduces this term by $\sim$21\%.
+  \item $B / D^\beta$ is the \textbf{data-limited term}. Given an infinitely large model, loss decreases as a power law in data. The exponent $\beta \approx 0.28$ means that doubling $D$ reduces this term by $\sim$18\%.
+\end{itemize}
+
+Both exponents are less than 1, which means \textbf{diminishing returns}: each successive doubling buys less than the previous one. But the returns never reach zero---there is no plateau, only an ever-flattening slope.
+
+\paragraph{What do the numbers feel like?} Let us plug in the Project~2 anchor for illustration.\footnote{We use Chinchilla's fitted coefficients here to build intuition, not as ground truth. These numbers are specific to Chinchilla's architecture, tokenizer, and data mix. Your own setup would give different coefficients---that is exactly why Section~\ref{sec:fitting} teaches you to re-fit.} Suppose you train at the 7-day Chinchilla-optimal point ($N \approx 900$M, $D \approx 18$B). Using Chinchilla's coefficients\footnote{$A$ and $B$ carry units that make the equation dimensionally consistent (nats $\times$ params$^{\alpha}$ and nats $\times$ tokens$^{\beta}$); they are not directly interpretable---only their effect through the equation matters.} ($E \approx 1.69$, $A \approx 406.4$, $\alpha \approx 0.34$, $B \approx 410.7$, $\beta \approx 0.28$):
+\[
+L \;\approx\; 1.69 + \frac{406.4}{(9 \times 10^8)^{0.34}} + \frac{410.7}{(1.8 \times 10^{10})^{0.28}} \;\approx\; 1.69 + 0.30 + 0.23 \;\approx\; 2.22 \;\text{nats/token}
+\]
+This corresponds to a perplexity of $e^{2.22} \approx 9.2$. For comparison, GPT-3 achieved $\sim$1.73 nats/token (perplexity $\sim$5.6) with 3,000$\times$ more compute. The gap is real but not as large as the compute gap suggests---this is the power of diminishing returns working in your favor.
+
+\paragraph{Reading a log-log plot.} On a log-log plot, a power law appears as a straight line. The slope is the exponent: steeper means faster scaling. Most scaling-law papers present loss vs.\ compute on log-log axes, and the ``scaling regime'' is the region where the line is straight. Deviations from linearity signal either data contamination, architectural bottlenecks, or the onset of new scaling behavior.
+
+\paragraph{From loss to capability.} A 0.1-nat reduction in cross-entropy loss sounds small. But on a typical BPE vocabulary of 50K tokens, this corresponds to a perplexity reduction of roughly 10\%---which translates to noticeably better text quality, fewer factual errors, and improved few-shot performance. The relationship between loss and downstream task accuracy is not linear; it depends on the task and the metric. Some tasks improve smoothly with loss; others appear to ``turn on'' suddenly.
+
+\begin{tcolorbox}[colback=blue!3, colframe=blue!40, title={\small Do Capabilities Emerge Suddenly?}]
+Wei et al.\ (2022) observed that certain capabilities---arithmetic, chain-of-thought reasoning, instruction following---appeared to ``emerge'' at specific model scales, with near-zero performance below a threshold and rapid improvement above it. This was interpreted as evidence for phase transitions in capability.
+
+Schaeffer et al.\ (2023) offered a simpler explanation: the apparent sharpness is largely a \textbf{metric artifact}. When you measure accuracy with a binary threshold (right/wrong), a smooth improvement in log-probability can look like a step function. When you use continuous metrics (log-likelihood, Brier score), the transitions are smooth.
+
+The current consensus: \textbf{loss scales smoothly as a power law; whether you see sharp transitions in downstream accuracy depends on your evaluation metric.} We return to evaluation design in Chapter~\ref{ch:evaluation}.
+\end{tcolorbox}
+
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/ch08/fig_power_law_curves.png}
+\caption{Power-law scaling of cross-entropy loss. \textbf{Left:} Loss vs.\ model size $N$ (fixing sufficient data). \textbf{Right:} Loss vs.\ training data $D$ (fixing sufficient model size). Both follow straight lines on log-log axes with slopes $\alpha \approx 0.34$ and $\beta \approx 0.28$. The dashed line marks the irreducible entropy $E \approx 1.69$ nats/token. The orange annotation shows the practical implication: 10$\times$ more compute reduces loss by $\sim$0.11 nats.}
+\label{fig:power-law-curves}
+\end{figure}
+
+\subsection{What the Exponents Are Not}
+\label{sec:exponents-caveat}
+
+A critical caveat: $\alpha$, $\beta$, $A$, $B$, and $E$ are \textbf{not universal constants}. They depend on:
+
+\begin{itemize}[nosep]
+  \item \textbf{Tokenizer}: BPE with 32K vs.\ 128K vocabulary changes the effective $D$ and shifts $E$.
+  \item \textbf{Architecture}: RoPE vs.\ ALiBi, SwiGLU vs.\ GELU, GQA vs.\ MHA all affect $\alpha$.
+  \item \textbf{Optimizer and schedule}: AdamW vs.\ Lion, cosine vs.\ WSD, warmup length.
+  \item \textbf{Data distribution}: code-heavy vs.\ text-heavy corpora shift both $E$ and $\beta$.
+\end{itemize}
+
+Published exponents (Kaplan's, Chinchilla's, or anyone else's) are specific to a particular experimental setup. If you change any of the above, you need to \textbf{re-fit}. This is not a failure of scaling laws---it is their nature. They are empirical regularities, not physical laws. Section~\ref{sec:fitting} teaches you how to do the re-fitting.
+
+
+\begin{quickrecap}
+\textbf{Quick Recap.} Loss follows $L(N,D) = E + A/N^\alpha + B/D^\beta$---a smooth power law with diminishing returns. The exponents are architecture- and data-dependent, not universal constants.
+
+\textit{Next: two careful teams measured these exponents three years apart and got opposite answers. What happened?}
+\end{quickrecap}
+
+
+
+%======================================================================
+\section{The Kaplan--Chinchilla Story}
+\label{sec:kaplan-chinchilla}
+%======================================================================
+
+This section is not a history lesson. It is the most important case study in this chapter---and possibly in Part~II. It shows how two groups of careful researchers, both doing rigorous empirical work, reached opposite conclusions about the same phenomenon. The resolution is not that one was wrong. It is that \emph{the experimental protocol was part of the result}, and changing the protocol changed the answer. If you internalize one methodological lesson from this book, let it be this one.
+
+\subsection{Act I: Kaplan (2020)---Bigger Models Win}
+\label{sec:kaplan}
+
+In January 2020, Kaplan et al.\ at OpenAI published one of the most influential papers in the scaling-law literature. They trained hundreds of Transformer language models ranging from 768 parameters to 1.5 billion parameters, varying model size and data independently, and fit power laws to the resulting loss curves.
+
+Their central finding: \textbf{model size matters more than data size.} Specifically, for a fixed compute budget $C$:
+\begin{align}
+N^* &\propto C^{0.73} \\
+D^* &\propto C^{0.27}
+\end{align}
+Model size should grow nearly 3$\times$ faster than data. The practical implication was clear: if you have more compute, \emph{make the model bigger}, not the dataset.
+
+This recommendation directly shaped GPT-3 (June 2020): 175 billion parameters trained on only 300 billion tokens---a ratio of $N$:$D \approx 1$:$1.7$. At the time, this was considered a good allocation.
+
+
+\subsection{Act II: Chinchilla (2022)---Equal Scaling}
+\label{sec:chinchilla}
+
+Two years later, Hoffmann et al.\ at DeepMind~\cite{hoffmann2022training} repeated the exercise with a more careful protocol. They trained over 400 models from 70M to 16B parameters, varying both $N$ and $D$ across a much wider range, and used three independent methods to estimate the compute-optimal frontier: (1) IsoFLOP profiling (the method we teach in Section~\ref{sec:fitting}), (2) IsoLoss contour fitting, and (3) direct parametric fitting of $L(N, D)$. That three independent approaches converged on the same answer is itself a lesson in scientific methodology---it is the same cross-validation logic you will use in Section~\ref{sec:fitting} when checking whether your own fit is trustworthy.
+
+Their central finding was the opposite of Kaplan's: \textbf{model size and data should scale equally.} Specifically:
+\begin{align}
+N^* &\propto C^{0.50} \\
+D^* &\propto C^{0.50}
+\end{align}
+For a compute-optimal model, the number of parameters and the number of tokens should be roughly equal in magnitude: $N^* \approx D^*/20$.
+
+To prove the point, they trained Chinchilla: a 70B-parameter model on 1.4 trillion tokens. Despite being 4$\times$ smaller than the 280B-parameter Gopher (trained on 300B tokens with similar compute), Chinchilla outperformed it on nearly every benchmark. The allocation, not the scale, made the difference.
+
+
+\subsection{Act III: Why They Disagreed}
+\label{sec:disagreement}
+
+Two careful empirical studies, three years apart, reached opposite conclusions. The discrepancy was not due to error---it was due to \textbf{measurement protocol}:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Learning rate schedule.} Kaplan trained all models with a \emph{fixed} schedule. Small models, which converge faster, were effectively under-trained---they did not reach their true minimum loss. This made small models look worse than they are, biasing the fit toward ``bigger is better.'' Chinchilla let each model's cosine schedule run to completion, giving every model a fair chance.
+  \item \textbf{Data range.} Kaplan's data budget ranged from 22M to 23B tokens. Chinchilla's ranged up to 1.4T tokens---60$\times$ wider. A wider range reveals curvature that a narrow range misses.
+  \item \textbf{Tokenizer and architecture.} Minor differences (BPE vocabulary size, positional encoding, normalization) contribute to different exponents. These are small effects individually but compound.
+\end{enumerate}
+
+The meta-lesson is worth stating explicitly:
+
+\begin{tcolorbox}[colback=orange!5, colframe=orange!60, title={}]
+\centering\itshape
+Scaling laws are not discovered; they are measured.\\
+And measurements are only as good as the protocol.
+\end{tcolorbox}
+
+This is why Section~\ref{sec:fitting} teaches you to fit your own scaling laws on your own setup, rather than trusting published exponents. Kaplan's exponents were correct \emph{for Kaplan's protocol}. Chinchilla's exponents were correct \emph{for Chinchilla's protocol}. Neither is wrong. The lesson is that the protocol is part of the result.
+
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/ch08/fig_kaplan_chinchilla.png}
+\caption{The Kaplan--Chinchilla allocation contrast. \textbf{Left:} Kaplan (2020) found that 73\% of additional compute should go to model size and only 27\% to data ($N^* \propto C^{0.73}$). \textbf{Right:} Chinchilla (2022) found a 50/50 split ($N^* \propto C^{0.50}$). Same question, opposite answers---the difference was the measurement protocol, not the architecture.}
+\label{fig:kaplan-chinchilla}
+\end{figure}
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{\textbf{Pause and verify.} GPT-3 was trained with 175B parameters and 300B tokens. Under Chinchilla scaling ($N$:$D \approx 1$:$20$), what would compute-optimal allocation look like for the same compute budget?
+
+\textit{Hint:} $C \approx 6 \times 175\text{B} \times 300\text{B} = 3.15 \times 10^{23}$ FLOPs. Chinchilla-optimal: $N^* \approx \sqrt{C/120} \approx 51$B, $D^* \approx 20 \times N^* \approx 1$T tokens. That is: a model 3.4$\times$ smaller trained on 3.3$\times$ more data. Chinchilla-70B is close to this prediction.}}
+
+
+\begin{quickrecap}
+\textbf{Quick Recap.} Kaplan said bigger models win ($N \propto C^{0.73}$). Chinchilla said equal scaling ($N \propto C^{0.5}$). The difference was not error---it was protocol: fixed LR schedules biased Kaplan toward over-weighting model size.
+
+\textit{Next: even Chinchilla-optimal is not the whole story. Production models ignore it deliberately.}
+\end{quickrecap}
+
+
+
+%======================================================================
+\section{Compute-Optimal vs.\ Inference-Optimal}
+\label{sec:inference-optimal}
+%======================================================================
+
+Chinchilla answers a clean question: \emph{given a fixed training compute budget, what $(N, D)$ minimizes loss?} But this question ignores what happens after training.
+
+\subsection{The Inference Cost Reality}
+\label{sec:inference-cost}
+
+A production language model does not retire after training. It serves millions or billions of inference queries. Each query costs approximately $2N$ FLOPs per generated token (forward pass only). Over the model's deployment lifetime, the total inference compute often dwarfs the training compute:
+
+\[
+C_{\text{lifetime}} \;=\; \underbrace{6ND_{\text{train}}}_{\text{training}} \;+\; \underbrace{2N \cdot Q \cdot T_{\text{gen}}}_{\text{inference}}
+\]
+
+where $Q$ is the total number of queries and $T_{\text{gen}}$ is the average generated tokens per query.\footnote{This is a simplified model. Modern inference cost depends on context length (prefill vs.\ decode asymmetry), batch size, KV cache reuse, and quantization. The basic insight---inference cost dominates over many queries---holds in all variants.} For a widely deployed model, the inference term dominates.
+
+\paragraph{The inference-optimal shift.} Minimizing $C_{\text{lifetime}}$ with respect to $N$ pushes toward \textbf{smaller, longer-trained models}: reducing $N$ saves $2N$ per inference token across billions of queries, even if training cost $6ND$ increases. The implications are dramatic. Look at how the $N$:$D$ ratio has evolved since 2020:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lrrrl@{}}
+\toprule
+\textbf{Model} & \textbf{$N$} & \textbf{$D$} & \textbf{$N$:$D$} & \textbf{Chinchilla factor} \\
+\midrule
+GPT-3 (2020) & 175B & 300B & 1:1.7 & 0.09$\times$ (under-trained) \\
+Chinchilla (2022) & 70B & 1.4T & 1:20 & 1$\times$ (compute-optimal) \\
+LLaMA-2 7B (2023) & 7B & 2T & 1:286 & $\sim$14$\times$ over-trained \\
+Mistral 7B (2023) & 7B & $\sim$8T & 1:1143 & $\sim$57$\times$ over-trained \\
+LLaMA-3 8B (2024) & 8B & 15T & 1:1875 & $\sim$94$\times$ over-trained \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The pattern is unmistakable: since 2023, every major production model has been trained \emph{far} beyond Chinchilla-optimal---not by 10\% or 50\%, but by 10$\times$ to 100$\times$. This is not a mistake. It is the most expensive deliberate decision in the industry: spend more GPU-hours training a smaller model so that every one of the billions of inference queries is cheaper. When ChatGPT serves 100 million users, a 7B model at 94$\times$ over-training is vastly cheaper than a 70B model at Chinchilla-optimal---even though the 70B model would have been ``compute-optimal'' in the Chinchilla sense. The word ``optimal'' has no meaning without specifying what is being optimized.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/ch08/fig_overtraining.png}
+\caption{Production models are massively over-trained relative to Chinchilla. The horizontal axis shows the over-training factor: how many times more data each model used compared to its Chinchilla-optimal allocation. GPT-3 was under-trained (0.09$\times$). Since 2023, every major release has pushed to 10--100$\times$ over-training---a deliberate strategy to amortize inference cost across billions of queries.}
+\label{fig:overtraining}
+\end{figure}
+
+\paragraph{Practical implication.} If you are training a \emph{research model} (Project~2)---trained once, evaluated, then discarded---Chinchilla scaling is the right guide. If you are training a \emph{production model}---served to millions of users---you should over-train aggressively. The table above shows how aggressively the frontier labs have moved.
+
+
+\subsection{The Third Axis: Inference-Time Compute}
+\label{sec:test-time-compute}
+
+Since 2024, a new scaling axis has emerged: instead of only scaling training compute, some systems scale \textbf{inference-time compute} by having the model ``think longer'' at test time.
+
+Models like OpenAI's o1/o3, DeepSeek R1, and Gemini Thinking generate long chains of intermediate reasoning before producing a final answer. This trades more tokens per query (increasing inference cost) for substantially better performance on reasoning-intensive tasks. Snell et al.\ (2024) showed that in some settings, a small model with large inference-time compute can match a larger model with less thinking.
+
+This reframes the scaling equation:
+\begin{itemize}[nosep]
+  \item \textbf{Training compute} determines what the model has learned.
+  \item \textbf{Inference-time compute} determines how hard it searches or reasons at test time.
+  \item Both are scalable. The optimal split depends on the deployment scenario.
+\end{itemize}
+
+We do not cover the mechanisms of inference-time scaling here---reinforcement learning from reasoning, search, and self-consistency are the subjects of Part~III. (Unlocking effective inference-time reasoning typically requires its own training procedure---RL on reasoning traces---so this ``third axis'' is not truly independent of training compute; it requires a second stage of training investment.) But the existence of this axis means that the two-dimensional $(N, D)$ picture of scaling is no longer complete.
+
+
+\begin{quickrecap}
+\textbf{Quick Recap.} Chinchilla-optimal minimizes training cost. Production models minimize lifetime cost by over-training: smaller models, more data, cheaper inference. Since 2024, inference-time compute has emerged as a third scaling axis.
+
+\textit{Next: how do you fit your own scaling law instead of trusting published exponents?}
+\end{quickrecap}
+
+
+
+%======================================================================
+\section{Fitting Your Own Scaling Law}
+\label{sec:fitting}
+%======================================================================
+
+Published scaling exponents are architecture- and data-specific. If you change the tokenizer, the optimizer, the data mix, or the model family, the exponents change with them. The most valuable skill this chapter can teach you is not to memorize Chinchilla's numbers, but to \textbf{fit your own}.
+
+\subsection{The IsoFLOP Profiling Method}
+\label{sec:isoflop}
+
+The standard methodology, introduced in the Chinchilla paper and widely used in frontier labs, is \textbf{IsoFLOP profiling}:
+
+\begin{enumerate}
+  \item \textbf{Choose compute budgets.} Select 4--6 compute levels $\{C_1, C_2, \ldots, C_k\}$, spanning at least 1--2 orders of magnitude. For example: $10^{17}$, $3 \times 10^{17}$, $10^{18}$, $3 \times 10^{18}$, $10^{19}$ FLOPs.
+
+  \item \textbf{At each budget, vary $(N, D)$.} For each $C_i$, train 4--6 models at different points on the $ND = C_i/6$ hyperbola. For example, at $C = 10^{18}$:
+
+  \begin{center}
+  \begin{tabular}{rrl}
+  \toprule
+  $N$ & $D$ & $ND/6$ \\
+  \midrule
+  10M & 17B & $\approx 10^{18}$ \\
+  30M & 5.6B & $\approx 10^{18}$ \\
+  100M & 1.7B & $\approx 10^{18}$ \\
+  300M & 560M & $\approx 10^{18}$ \\
+  \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \item \textbf{Find the optimum at each budget.} For each $C_i$, the model with the lowest final loss identifies the compute-optimal $(N^*_i, D^*_i)$.
+
+  \item \textbf{Fit the scaling relationship.} Plot $\log N^*$ vs.\ $\log C$ across all budgets. If the relationship is linear (it usually is), fit:
+  \[
+  N^* = a \cdot C^p, \qquad D^* = b \cdot C^q
+  \]
+  where $p + q \approx 1$ (since $N^* \cdot D^* \propto C$). Chinchilla found $p \approx q \approx 0.5$.
+
+  \item \textbf{Extrapolate.} Given your full Project~2 budget $C_{\text{target}}$, plug in to get recommended $N^*$ and $D^*$.
+\end{enumerate}
+
+\paragraph{A worked example.} Suppose you run IsoFLOP profiling at four budgets and find these compute-optimal model sizes:
+
+\begin{center}
+\begin{tabular}{rrl}
+\toprule
+$C_i$ (FLOPs) & $N^*_i$ & $D^*_i$ \\
+\midrule
+$10^{17}$ & 8M & 2.1B \\
+$10^{18}$ & 25M & 6.7B \\
+$10^{19}$ & 80M & 21B \\
+$10^{20}$ & 250M & 67B \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Fitting $\log N^*$ vs.\ $\log C$ gives slope $p \approx 0.49$---close to Chinchilla's 0.5. Your Project~2 budget is $C_{\text{target}} \approx 10^{21}$. Extrapolating: $N^* = 250\text{M} \times (10^{21}/10^{20})^{0.49} \approx 250\text{M} \times 3.1 \approx 775$M. The corresponding $D^* \approx 10^{21} / (6 \times 7.75 \times 10^8) \approx 21.5$B tokens. This is consistent with our earlier Chinchilla-based estimate of $\sim$900M / 18B tokens---the two methods converge, which is a good sign.
+
+The beauty of this approach is that you have measured the scaling behavior of \emph{your specific setup}---your tokenizer, your architecture, your data mix. No faith in published exponents required.
+
+\paragraph{Cost of profiling.} The pilot runs are not free, but they are cheap relative to the full run. If your profiling budgets span $10^{17}$ to $10^{19}$ and you run 5 models at each of 5 budgets, the total pilot compute is $\sim$25 $\times$ the average budget $\sim$ $5 \times 10^{18}$ FLOPs. For a Project~2 budget of $\sim$$10^{21}$ FLOPs, this is $\sim$0.5\%---negligible. Chapter~\ref{ch:what-changes} \S6.5 recommended budgeting 5--10\% of compute for pilots; IsoFLOP profiling fits comfortably within that margin.
+
+\paragraph{Connection to \textmu P.} If you use Maximal Update Parametrization (\textmu P; Yang et al., 2022), hyperparameters (learning rate, initialization scale) tuned on a small model transfer to larger models within the same family. This means your IsoFLOP pilot runs are not only measuring loss---they are also validating hyperparameters. The combination of \textmu P + IsoFLOP profiling is the standard pre-training pilot methodology at frontier labs. A caveat: \textmu P works best for width scaling and less reliably across depth or major architectural changes (Chapter~\ref{ch:what-changes}, \S6.5). If \textmu P transfer fails, the small-scale pilots are measuring loss under sub-optimal hyperparameters, and the extrapolation becomes unreliable. Always verify that pilot hyperparameters produce stable training before trusting the fit.
+
+
+\subsection{Failure Modes of Scaling-Law Fits}
+\label{sec:fitting-failures}
+
+Scaling-law fits can mislead in several ways:
+
+\begin{itemize}[nosep]
+  \item \textbf{Too narrow a budget range.} If all pilot budgets are within 3$\times$ of each other, the power-law fit has too little dynamic range to distinguish $p = 0.5$ from $p = 0.7$. Extrapolation over one order of magnitude requires fitting over at least one order of magnitude.
+  \item \textbf{Under-trained pilots.} If small models do not train to convergence (the Kaplan trap), they look worse than they are, biasing the fit toward larger models.
+  \item \textbf{Architecture changes.} A fit on dense Transformers does not transfer to MoE models. Expert routing changes the effective $N$ (active parameters $\ll$ total parameters).
+  \item \textbf{Data quality shifts.} Scaling laws assume the data distribution is fixed. If your full-scale data mix differs from your pilot data mix (different proportions of code, math, multilingual), the exponents will shift.
+\end{itemize}
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{\textbf{Pause and verify.} You run IsoFLOP profiling at $C = 10^{17}$ and $C = 10^{18}$ and find $N^* = 5$M and $N^* = 30$M respectively. What is the implied exponent $p$?
+
+\textit{Hint:} $p = \log(30/5) / \log(10^{18}/10^{17}) = \log(6)/\log(10) \approx 0.78$. This is closer to Kaplan's 0.73 than Chinchilla's 0.5. Before trusting it, check: did your pilot runs train to convergence? Was the LR schedule properly scaled? The \emph{first} thing to suspect when you get a Kaplan-like exponent on a modern setup is under-trained small models---the exact same methodological trap that separated Kaplan from Chinchilla (\S\ref{sec:disagreement}).}}
+
+
+\begin{quickrecap}
+\textbf{Quick Recap.} IsoFLOP profiling: train small models at multiple compute budgets, find the optimum at each, fit a power law, extrapolate. The methodology is cheap ($<$1\% of the full budget) and far more reliable than trusting published exponents.
+
+\textit{Next: putting it all together for Project~2.}
+\end{quickrecap}
+
+
+
+%======================================================================
+\section{Project~2 Reality Check}
+\label{sec:scaling-project2}
+%======================================================================
+
+Let us apply everything in this chapter to the concrete decision facing Project~2: how large should the model be, and how much data should it see?
+
+\subsection{Budget Calculation}
+\label{sec:budget-calc}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lXr@{}}
+\toprule
+\textbf{Scenario} & \textbf{Setup} & \textbf{Effective $C$} \\
+\midrule
+3-day sprint & 4$\times$H100, MFU $\sim$45\% & $\sim$4.2 $\times$ 10$^{20}$ FLOPs \\
+7-day standard & 4$\times$H100, MFU $\sim$45\% & $\sim$9.8 $\times$ 10$^{20}$ FLOPs \\
+14-day extended & 4$\times$H100, MFU $\sim$45\% & $\sim$1.96 $\times$ 10$^{21}$ FLOPs \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\paragraph{Derivation.} For the 7-day scenario: $4 \times 990\,\text{TFLOPS} \times 0.45 \times 7 \times 86400\,\text{s} = 9.8 \times 10^{20}$ FLOPs.
+
+\subsection{Recommended Configurations}
+\label{sec:recommended-config}
+
+Using Chinchilla scaling ($N^* \propto C^{0.5}$, $N$:$D \approx 1$:$20$):
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lrrrl@{}}
+\toprule
+\textbf{Scenario} & \textbf{$C$} & \textbf{Chinchilla $N^*$} & \textbf{Chinchilla $D^*$} & \textbf{Note} \\
+\midrule
+3-day sprint & $4.2 \times 10^{20}$ & $\sim$600M & $\sim$12B & Moderate scale \\
+7-day standard & $9.8 \times 10^{20}$ & $\sim$900M & $\sim$18B & \textbf{Recommended} \\
+14-day extended & $1.96 \times 10^{21}$ & $\sim$1.3B & $\sim$26B & Ambitious \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\paragraph{Interpretation.} The 7-day budget supports a compute-optimal model of roughly 900M--1B parameters trained on 18--20B tokens. This is in the same ballpark as GPT-2 XL (1.5B, 40B tokens)---a genuine medium-scale language model with coherent multi-paragraph generation.
+
+If you prefer to over-train (smaller model, more data, better inference):
+\begin{itemize}[nosep]
+  \item 300M trained on 50B tokens (over-training factor $\sim$8$\times$) gives a fast, cheap-to-serve model.
+  \item 1.3B trained on 13B tokens (slightly under Chinchilla) gives a larger model but fewer tokens---loss may not converge as well.
+\end{itemize}
+
+The right choice depends on your goal. For research evaluation (Project~2's primary purpose), Chinchilla-optimal is the default.
+
+
+\subsection{Setting Expectations}
+\label{sec:expectations}
+
+\begin{center}
+\begin{tabular}{lrl}
+\toprule
+\textbf{Comparison} & \textbf{Training compute} & \textbf{Relative to Project~2} \\
+\midrule
+Project~2 (7-day) & $\sim$10$^{21}$ & 1$\times$ \\
+GPT-2 XL & $\sim$10$^{20}$ & 0.1$\times$ \\
+LLaMA-2 7B & $\sim$10$^{23}$ & 100$\times$ \\
+LLaMA-3 8B & $\sim$10$^{24}$ & 1000$\times$ \\
+GPT-4 (estimated) & $\sim$10$^{25}$ & 10,000$\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Project~2 is roughly 10$\times$ GPT-2 and 100$\times$ smaller than LLaMA-2. Your model will generate coherent text and show basic knowledge, but will not match the quality of frontier models. This is expected: the goal of Project~2 is to \textbf{practice the engineering workflow}, not to produce a state-of-the-art model.
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{\textbf{Pause and verify.} For the 7-day scenario ($C \approx 10^{21}$), verify the Chinchilla-optimal configuration: $N^* \approx \sqrt{C/120}$. Plugging in: $\sqrt{10^{21}/120} \approx \sqrt{8.3 \times 10^{18}} \approx 9.1 \times 10^8 \approx 900$M. Then $D^* \approx C/(6N^*) \approx 10^{21}/(6 \times 9 \times 10^8) \approx 1.85 \times 10^{11} \approx 18.5$B tokens. The $N$:$D$ ratio is $\approx 1$:$20$---exactly Chinchilla.}}
+
+
+%----------------------------------------------------------------------
+\begin{takeaways}
+\textbf{Key Takeaways}
+\begin{itemize}[nosep]
+  \item Training compute $C \approx 6ND$. This transforms the training decision into a resource allocation problem on a hyperbola.
+  \item Loss follows $L(N,D) = E + A/N^\alpha + B/D^\beta$---a power law with diminishing returns. The exponents are not universal; they depend on architecture, data, optimizer, and schedule.
+  \item Kaplan (2020) and Chinchilla (2022) disagreed because of measurement protocol, not because one was wrong. The meta-lesson: scaling laws are measured, not discovered.
+  \item Chinchilla-optimal ($N$:$D \approx 1$:$20$) minimizes training compute. Production models over-train 10--100$\times$ to minimize lifetime inference cost. ``Optimal'' depends on what you are optimizing for.
+  \item IsoFLOP profiling lets you fit your own scaling law from cheap pilot runs. This is far more reliable than trusting published exponents.
+  \item For Project~2 (4$\times$H100, 7 days): $\sim$900M--1B parameters, $\sim$18--20B tokens.
+\end{itemize}
+\end{takeaways}
+
+
+%----------------------------------------------------------------------
+\section{Summary}
+
+\paragraph{What this chapter established.} Chapter~\ref{ch:distributed-training} taught how to distribute a training run across GPUs. This chapter asked the harder question: what run is worth doing? The chapter followed a deliberate progression: \emph{allocation problem} ($C = 6ND$) $\to$ \emph{empirical regularity} (power-law loss) $\to$ \emph{measurement protocol matters} (Kaplan vs.\ Chinchilla) $\to$ \emph{``optimal'' depends on what you optimize} (training-compute vs.\ lifetime cost) $\to$ \emph{fit your own} (IsoFLOP profiling) $\to$ \emph{apply to Project~2}. Each section built on the previous one's conclusions while challenging its hidden assumptions.
+
+\paragraph{The Kaplan--Chinchilla lesson.} The most important takeaway from this chapter is not any specific exponent or ratio. It is the epistemological principle: \emph{scaling laws are tight empirical regressions whose constants drift with every methodological change.} Two careful teams, both doing rigorous work, reached opposite conclusions because their protocols differed. Read scaling results with the same care you would read any experimental measurement---attending to the protocol as much as the result.
+
+\paragraph{One sentence.} Scaling laws do not tell you that bigger is better; they tell you how to spend a fixed compute budget---and when that advice stops applying.
+
+\paragraph{What comes next.} You now know how to choose model size and data quantity. But the scaling law $L(N,D)$ treats all tokens equally---one token of Wikipedia and one token of scraped HTML contribute the same to $D$. Chapter~\ref{ch:data-engineering} asks: \emph{is that true?} The answer is no. Data quality can shift the effective $\beta$ by a factor of two, making ``where the data comes from'' as important as ``how much data there is.''
+
+
+%----------------------------------------------------------------------
+\section*{Key Equations at a Glance}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}p{5cm}X@{}}
+\toprule
+\textbf{Quantity} & \textbf{Expression} \\
+\midrule
+Training compute & $C \approx 6ND$ \\
+Chinchilla loss & $L(N,D) = E + A/N^\alpha + B/D^\beta$ \\
+Chinchilla-optimal & $N^* \propto C^{0.5}$, $D^* \propto C^{0.5}$, $N^*$:$D^* \approx 1$:$20$ \\
+Kaplan-optimal & $N^* \propto C^{0.73}$, $D^* \propto C^{0.27}$ \\
+Inference cost/token & $\approx 2N$ FLOPs \\
+Lifetime compute & $C_{\text{life}} = 6ND_{\text{train}} + 2N \cdot Q \cdot T_{\text{gen}}$ \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+
+%----------------------------------------------------------------------
+\section*{Key Readings}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Kaplan et al., 2020.} ``Scaling Laws for Neural Language Models.'' The foundational study. Read with the caveat that its LR protocol biases toward larger models.
+  \item \textbf{Hoffmann et al., 2022.} ``Training Compute-Optimal Large Language Models'' (Chinchilla). The compute-optimal correction. Pay attention to the three independent estimation methods.
+  \item \textbf{Sardana \& Mitchell, 2023.} ``Beyond Chinchilla-Optimal.'' Formalizes inference-aware scaling. Read this after understanding why LLaMA over-trains.
+  \item \textbf{Snell et al., 2024.} ``Scaling LLM Test-Time Compute Optimally.'' Establishes inference-time compute as a third scaling axis.
+  \item \textbf{Wei et al., 2022 + Schaeffer et al., 2023.} The emergence debate. Read both to understand how metric choice affects conclusions about scaling.
+  \item \textbf{Yang et al., 2022.} ``Tensor Programs V: Tuning Large Neural Networks via Zero-Shot Hyperparameter Transfer'' (\textmu P). The bridge between scaling-law profiling and hyperparameter transfer.
+\end{enumerate}

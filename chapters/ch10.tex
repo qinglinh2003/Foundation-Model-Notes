@@ -1,41 +1,722 @@
 \chapter{Evaluation, Benchmarks, and In-Context Learning}
 \label{ch:evaluation}
+\raggedbottom
 
-% Part II, Chapter 10: Measuring model capability without fooling yourself.
-%
-% Core question: Your model's validation loss is 2.8. What does that mean?
-% Almost nothing -- because loss doesn't directly map to any human-relevant
-% capability. So how do you actually know if your model is good?
-%
-% This chapter connects back to Project 1's "metrics can lie" insight
-% (Lab 5 Exp 0, Ablation 1) and extends it to the evaluation of large models.
-%
-% Planned sections:
-%   10.1  Hook: "A Lower Loss Does Not Mean a Better Model."
-%   10.2  Perplexity and Its Limitations
-%   10.3  Benchmark Suites: MMLU, HellaSwag, HumanEval, GSM8K
-%   10.4  Few-Shot Evaluation Protocol
-%   10.5  In-Context Learning: What It Is and Why It Matters
-%   10.6  Contamination Detection: When Benchmarks Lie
-%   10.7  Generation-Based Evaluation
-%   10.8  Human Evaluation and Preference
-%   10.9  Failure Modes in Evaluation
-%
-% Key thesis: Evaluation is the most underrated and most unsolved problem
-% in the LLM pipeline. Industry spends enormous engineering resources on
-% eval infrastructure, yet there is still no consensus metric for "model
-% quality." Students must learn to design eval thoughtfully, not just
-% report numbers.
-%
-% In-context learning is covered here (not in scaling) because it is both
-% an emergent capability and an evaluation protocol. Few-shot prompting
-% is how we measure model capability, not just how we use models.
-%
-% Lab 10 (planned): Design and run a mini eval suite for a small pretrained
-% model. Compare perplexity, few-shot accuracy, and generation quality.
-% Show that rankings can change depending on the eval protocol.
+In March 2023, GPT-4 scored 86.4\% on MMLU. Four months later, a team showed that rephrasing the same questions---without changing their content---shifted scores by up to 10 percentage points~\cite{sclar2023quantifying}. The model had not changed. The measurement had.
 
-\textit{This chapter is a placeholder. It will cover perplexity limitations,
-benchmark suites, few-shot evaluation, in-context learning, contamination
-detection, generation-based and human evaluation, and evaluation failure
-modes.}
+Chapter~\ref{ch:data-engineering} ended with an uncomfortable observation: ``a low loss can coexist with a model that hallucinates confidently, fails at elementary reasoning, or memorizes its training data verbatim while generalizing nowhere.'' That observation is the starting point for this chapter.
+
+Part~II has been about \emph{producing} a model: scaling the architecture (Chapter~\ref{ch:what-changes}), distributing the computation (Chapter~\ref{ch:distributed-training}), allocating the budget (Chapter~\ref{ch:scaling-laws}), and curating the data (Chapter~\ref{ch:data-engineering}). This chapter asks the question we have been deferring: \emph{how do you know what you produced?}
+
+The honest answer is: with difficulty. Evaluation is the part of the LLM pipeline where rigorous answers are hardest to come by. Every benchmark has known limits; every metric, optimized hard enough, stops meaning what it was designed to mean; every measurement protocol introduces degrees of freedom that affect the result. This chapter does not solve evaluation---nobody has. It teaches you to evaluate \emph{responsibly} in a field where the measurement instruments are themselves under construction.
+
+\paragraph{The three-layer schema.} This chapter organizes evaluation into three layers, each with different epistemics:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Loss-based evaluation (intrinsic).} Well-defined math, weak link to capability.
+  \item \textbf{Benchmark-based evaluation (extrinsic, automated).} Stronger capability proxy---if uncontaminated and well-designed. Both conditions are frequently violated.
+  \item \textbf{Behavioral evaluation (extrinsic, qualitative).} Closest to actual capability, weakest reproducibility.
+\end{enumerate}
+
+No layer is ``correct.'' Mature evaluation is the deliberate combination of all three. Each section of this chapter places evaluation methods within this schema, so you learn to \emph{navigate the three-layer trade-off}, not to ask ``which benchmark is best.''
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch10/fig_three_layer_schema.png}
+\caption{\textbf{Three-layer evaluation schema.} Loss-based evaluation is
+mathematically precise but weakly tied to capability; benchmarks are scalable
+capability proxies but fragile under contamination, saturation, and prompt
+choices; behavioral evaluation is closest to real use but noisy and expensive.
+Responsible evaluation triangulates across all three.}
+\label{fig:three-layer-schema}
+\end{figure}
+
+\paragraph{Running example.} We continue from Chapters~\ref{ch:what-changes}--\ref{ch:data-engineering}: you have trained a $\sim$900M model on $\sim$18B tokens using 4$\times$H100 for 7 days. You have a held-out validation set. You must evaluate against standard benchmarks and report results in your Project~2 deliverable. Every section returns to this scenario: \emph{what does this evaluation method tell you about your 900M model? What does it not tell you?}
+
+
+\subsection*{Learning Objectives}
+
+After completing this chapter, you should be able to:
+
+\begin{enumerate}
+  \item Explain why validation loss alone is insufficient as an evaluation metric, and convert between loss, perplexity, and bits-per-byte.
+  \item Classify benchmarks into knowledge, reasoning, code, and common-sense categories, and identify each category's known failure modes.
+  \item Describe the in-context learning paradigm (zero-shot, few-shot, many-shot) and explain how shot count, prompt template, and context length affect measured performance.
+  \item Articulate Goodhart's law in the context of LLM evaluation and identify the benchmark decay cycle.
+  \item Compute confidence intervals for benchmark scores and identify when reported improvements are within statistical noise.
+  \item Produce a Project~2 evaluation report: benchmark results with methodology, contamination audit, confidence intervals, qualitative samples, and known limitations.
+\end{enumerate}
+
+
+\subsection*{Notation}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Symbol & Meaning \\
+\midrule
+$L$ & Cross-entropy loss (nats/token) \\
+PPL & Perplexity: $e^L$ \\
+BPB & Bits-per-byte: $L / \ln 2 \times (\text{tokens}/\text{bytes})$ \\
+$K$ & Number of in-context examples (``shots'') \\
+$n$ & Number of evaluation examples in a benchmark \\
+$p$ & Measured accuracy on a benchmark \\
+CI & Confidence interval: $\pm 1.96\sqrt{p(1-p)/n}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+
+\subsection*{Timeline}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Year} & \textbf{Milestone} \\
+\midrule
+2018 & GLUE / SuperGLUE: first systematic NLU benchmark suites \\
+2019 & HellaSwag, ARC: commonsense reasoning benchmarks \\
+2020 & GPT-3 introduces few-shot evaluation as standard protocol \\
+2020 & MMLU: 57-subject knowledge benchmark, quickly adopted as default \\
+2021 & BIG-bench: 200+ tasks, crowd-sourced \\
+2022 & GSM8K: grade-school math reasoning \\
+2023 & LMSYS Chatbot Arena: crowd-sourced pairwise human evaluation \\
+2023 & MT-Bench, AlpacaEval: LLM-as-judge evaluation \\
+2024 & Many-shot ICL; MMLU-Pro, GPQA, LiveBench: contamination-resistant benchmarks \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+
+%======================================================================
+\section{The Measurement Problem}
+\label{sec:measurement-problem}
+
+Your model's validation loss is 2.8 nats/token. What does that mean?
+
+It means the model assigns, on average, probability $e^{-2.8} \approx 6\%$ to the next token. This is a precise mathematical statement---and it tells you almost nothing about what the model \emph{can do}. Can it answer questions? Write code? Follow instructions? Reason about multi-step problems? Loss is silent on all of these.
+
+The difficulty is not just operational (``which benchmark to use'') but conceptual. Consider three levels of evaluation difficulty:
+
+\begin{itemize}[nosep]
+  \item \textbf{Operational}: contamination inflates scores (Chapter~\ref{ch:data-engineering}); prompt templates shift scores by 5--10 percentage points; statistical noise on small test sets hides or invents differences.
+  \item \textbf{Conceptual}: what does ``reasoning ability'' even mean? How do you operationalize ``helpfulness'' or ``factual accuracy'' in a way that can be measured?
+  \item \textbf{Sociological}: benchmarks become targets. Labs game them. Evaluation becomes marketing.
+\end{itemize}
+
+These three levels map onto the three evaluation layers: loss-based measurement is operationally clean but conceptually weak; benchmarks address the conceptual level but are sociologically corrupted; behavioral evaluation reaches real capability but is operationally noisy.
+
+\paragraph{A concrete example.} Llama-3 vs Llama-2 on MMLU: the score jumped from 68\% to 80\%. Real improvement, or better data curation that happened to include more MMLU-adjacent content? GSM8K is near-saturated at frontier (95\%+), but GSM-Hard sees large drops---same ``mathematical reasoning'' or different? Phi-3 punches above its weight class on benchmarks but is brittle in deployment. \emph{Every published score carries implicit caveats that are rarely stated.}
+
+\paragraph{What this chapter delivers.} By the end of this chapter, you will not have a perfect evaluation methodology---no one does. You will have: (a)~a framework for combining evidence across three evaluation layers, (b)~the ability to read published benchmark results with appropriate skepticism, and (c)~a concrete evaluation plan for Project~2 that is honest about what it measures and what it cannot.
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Evaluation operates at three layers: loss (precise but weak), benchmarks (stronger but fragile), and behavioral (realistic but noisy).
+  \item Each layer has different failure modes; no single layer suffices.
+  \item Evaluation is not Part~II's afterthought---it is its hardest unresolved problem.
+\end{itemize}
+\textit{Next: what does your training loss actually tell you---and where does it stop being informative?}
+\end{quickrecap}
+
+
+%======================================================================
+\section{Loss-Based Evaluation}
+\label{sec:loss-eval}
+
+Loss is the first evaluation layer: intrinsic, well-defined, and insufficient.
+
+\subsection{Loss, Perplexity, and Bits-per-Byte}
+
+Chapter~\ref{ch:tokens-to-training} introduced cross-entropy loss as the training objective. As an evaluation metric, it comes in three flavors:
+
+\begin{itemize}[nosep]
+  \item \textbf{Loss} $L$ (nats/token): the raw cross-entropy. Lower is better. Dependent on tokenizer.
+  \item \textbf{Perplexity} PPL $= e^L$: interpretable as ``the model is as uncertain as choosing uniformly among PPL options.'' A PPL of 10 means the model is roughly 10-way confused per token position.
+  \item \textbf{Bits-per-byte} (BPB): $L_{\text{bpb}} = L / \ln 2 \times (\text{tokens per byte})$. Tokenizer-agnostic---the only loss metric that allows fair comparison across models with different vocabularies.
+\end{itemize}
+
+\paragraph{Why BPB matters.} A model with a 32K vocabulary and one with a 128K vocabulary will produce different perplexity numbers on the same text, because they tokenize it into different numbers of tokens. Bits-per-byte normalizes by the raw byte count of the text, making comparisons fair. When reading published results, always check whether ``perplexity'' means tokenizer-specific or BPB-normalized.
+
+\subsection{Cross-Corpus Evaluation}
+
+A single validation loss number hides distributional detail. Your model's average loss of 2.8 might decompose as:
+\begin{itemize}[nosep]
+  \item Wikipedia: 2.4 (strong)
+  \item Code: 3.5 (weak)
+  \item Dialogue: 2.6 (moderate)
+  \item Math: 4.1 (very weak)
+\end{itemize}
+
+This cross-domain breakdown is far more informative than the average. It tells you which capabilities the model has developed (language modeling on encyclopedic text) and which it has not (mathematical reasoning). For Project~2, always compute validation loss separately on 3--4 domains, not just the aggregate.
+
+\subsection{What Loss Does Not Tell You}
+
+\begin{itemize}[nosep]
+  \item \textbf{Low loss, bad generation.} A model can fit a high-entropy distribution well (low loss) but produce incoherent samples---because the distribution itself is noisy (e.g., a mixture of many writing styles).
+  \item \textbf{High loss, decent generation.} A model evaluated on out-of-distribution text will show high loss but may generate competently within its training distribution.
+  \item \textbf{Capability threshold.} Loss decreases smoothly with scale, but downstream task performance can appear to unlock suddenly (Chapter~\ref{ch:scaling-laws}, ``Do Capabilities Emerge Suddenly?'' callout). Loss alone cannot tell you whether a specific capability has emerged.
+\end{itemize}
+
+The core distinction of this chapter's first layer: \textbf{loss measures distributional fit, not capability.} A low loss is necessary for a capable model but not sufficient.
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
+\textbf{Pause and verify.}\quad Two models are evaluated on the same held-out text. Model A has validation loss 2.7; Model B has loss 2.9. But when you prompt both to generate coherent paragraphs, Model B consistently produces more coherent, on-topic text.
+
+\smallskip
+What might explain this? \emph{Hint:} think about what each model was trained on and what the validation set contains.
+
+\smallskip
+\emph{Answer:} Model A may have been trained on data very similar to the validation set (including its noise), achieving low loss by fitting that specific distribution. Model B may have been trained on cleaner, more diverse data---higher loss on this particular validation set, but better generalization. This is exactly why loss alone is not enough: you need behavioral evaluation (layer 3) to detect this discrepancy.
+}}
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Loss, perplexity, and bits-per-byte are three views of the same quantity; BPB is the only tokenizer-agnostic one.
+  \item Cross-domain loss breakdown is far more informative than aggregate loss.
+  \item Loss measures distributional fit, not capability---the first core distinction of evaluation.
+\end{itemize}
+\textit{Next: if loss is not enough, what does the field use instead? Benchmarks---with all their strengths and failures.}
+\end{quickrecap}
+
+
+%======================================================================
+\section{Benchmarks: What They Measure and What They Miss}
+\label{sec:benchmarks}
+
+Benchmarks are the second evaluation layer: automated, scalable, and designed to proxy specific capabilities. The problem is that every benchmark measures capability through a narrow window, and that window has known distortions.
+
+\subsection{A Taxonomy}
+
+Rather than catalog every benchmark, we classify them by what they claim to measure. The table below covers the major categories; for any specific benchmark, the question to ask is always: \emph{what is the claimed capability, what is the actual test format, and how does it fail?}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}p{2.3cm}p{3.2cm}X p{3.5cm}@{}}
+\toprule
+\textbf{Category} & \textbf{Examples} & \textbf{Strength} & \textbf{Known Failure Mode} \\
+\midrule
+Knowledge & MMLU, TriviaQA, ARC & Covers breadth across domains & Rewards memorization; heavily contaminated \\
+Reasoning & GSM8K, MATH, BBH & Tests multi-step inference & Narrow task format; contamination via tutoring sites \\
+Code & HumanEval, MBPP, SWE-bench & Executable verification (objective) & Limited to function-level tasks; SWE-bench is less contaminated but expensive \\
+Common sense & HellaSwag, WinoGrande & Historically important & Saturated by frontier models ($>$95\%) \\
+Open-ended & LMSYS Arena, MT-Bench & Closest to real-world use & Subjective, expensive, gameable \\
+Fresh / robust & GPQA, MMLU-Pro, LiveBench & Designed against contamination and saturation & Newer, less validated \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Three Benchmarks in Depth}
+
+\paragraph{MMLU (Knowledge).} 57 subjects, multiple-choice. The most widely cited LLM benchmark---and the most contaminated. Its questions appear on study-guide websites, which end up in Common Crawl, which ends up in training data. A high MMLU score on a model trained on unfiltered web data should be interpreted with extreme caution. MMLU-Pro (2024) addresses some of these issues with harder questions and 10-choice format, but contamination remains a structural risk for any public benchmark.
+
+\paragraph{GSM8K (Reasoning).} 8.5K grade-school math word problems. Designed to test multi-step arithmetic reasoning. GSM8K became the default reasoning benchmark precisely because it is hard to solve without some reasoning (unlike multiple-choice, where elimination strategies help). However, frontier models now score $>$95\%, so it is approaching saturation. GSM-Hard variants (larger numbers, more steps) show significant drops, suggesting that measured ``reasoning'' may be more fragile than scores suggest.
+
+\paragraph{HellaSwag (Common Sense).} Sentence completion with adversarially generated wrong answers. At the time of release (2019), it was challenging ($<$50\% for GPT-2). Frontier models now score $>$95\%. For Project~2, HellaSwag is still a useful benchmark---your 900M model will score well below saturation, so the signal is meaningful.
+
+\subsection{The Saturation Problem}
+
+When frontier models score $>$90\% on a benchmark, small differences in score stop being meaningful:
+\begin{itemize}[nosep]
+  \item The remaining 10\% may contain ambiguous or poorly constructed items.
+  \item The binomial CI at 95\% accuracy on 1000 items is $\pm$1.4 percentage points---many ``improvements'' are within noise.
+  \item Models may solve the remaining items through superficial pattern matching rather than genuine capability.
+\end{itemize}
+
+A saturated benchmark tells you ``this model is at least as capable as the benchmark can measure''---it does not tell you the model's actual ceiling. For Project~2 at 900M scale, saturation is not a concern. But when you read frontier model comparisons, check whether the benchmark is saturated before interpreting score differences.
+
+\begin{tcolorbox}[colback=orange!5, colframe=orange!60, title=\textbf{For Project~2: Which Benchmarks to Use}]
+\begin{itemize}[nosep]
+  \item \textbf{Use}: HellaSwag, ARC-Easy, ARC-Challenge, small MMLU subset (e.g., 5--10 subjects relevant to your data mix).
+  \item \textbf{Optional}: GSM8K if your data mix includes math; HumanEval if it includes code.
+  \item \textbf{Avoid}: benchmarks saturated by frontier models (use them only for sanity checks, not for capability claims); Arena-style evaluation (requires human judges and models much larger than 900M).
+  \item \textbf{Always}: report contamination check results alongside benchmark scores (Chapter~\ref{ch:data-engineering}, \S\ref{sec:contamination}).
+\end{itemize}
+\end{tcolorbox}
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Benchmarks proxy capability through narrow test formats; every benchmark has known failure modes.
+  \item Saturation, contamination, and prompt sensitivity are cross-cutting risks for all automated benchmarks.
+  \item For Project~2, use 3--4 benchmarks that are unsaturated at your model's scale and that match your data mix.
+\end{itemize}
+\textit{Next: how you prompt a benchmark---zero-shot, few-shot, many-shot---changes the measured score as much as the model itself.}
+\end{quickrecap}
+
+
+%======================================================================
+\section{In-Context Learning as Evaluation Protocol}
+\label{sec:icl}
+
+Before LLMs, evaluation meant fine-tuning a model on a task's training set and measuring accuracy on its test set. LLMs changed this: you prompt the model with a task description and optional examples, then measure performance---no weight updates, no task-specific training. This is \textbf{in-context learning} (ICL), and it permanently altered what ``evaluation'' means.
+
+\subsection{The Paradigm Shift}
+
+Concrete contrast:
+\begin{itemize}[nosep]
+  \item \textbf{BERT-era SST-2}: fine-tune BERT on SST-2 training set ($\sim$67K examples, several hours). Evaluate on test set. Report accuracy.
+  \item \textbf{GPT-3 era SST-2}: prompt the model with a task description + $K$ examples + test input. Take next-token prediction as the answer. Report accuracy. No training step.
+\end{itemize}
+
+The second method has no training step but introduces a \textbf{prompt engineering step}. The prompt template, the number of examples, the order of examples, and the format of the expected output all affect the score. Evaluation is now about prompt design as much as model capability.
+
+\subsection{Zero-Shot Prompting}
+
+No demonstrations; only a task instruction:
+
+\begin{verbatim}
+  Classify the sentiment as positive or negative.
+  Review: This movie was a complete waste of time.
+  Sentiment:
+\end{verbatim}
+
+What zero-shot tests: whether the model learned a useful task representation during pretraining. The pretraining corpus almost certainly contains implicit examples of sentiment classification (product reviews with ratings, movie critiques with recommendations), so zero-shot capability is partly ``have you seen this task structure before?''
+
+\paragraph{The ``zero-shot'' misnomer.} In pre-LLM machine learning, ``zero-shot learning'' meant recognizing unseen \emph{classes} within a known task family. In the LLM era, ``zero-shot prompting'' means no demonstration examples, though the model has almost certainly seen similar tasks during pretraining. These are different concepts sharing the same term---do not carry the wrong mental model from earlier ML coursework.
+
+\begin{tcolorbox}[colback=blue!3, colframe=blue!40, title={\small Zero-Shot Is Not Data-Free}]
+Zero-shot prompting removes demonstrations from the \emph{prompt}, not from the
+model's history. A pretrained LLM has absorbed countless implicit task examples
+from reviews, exams, tutorials, and Q\&A pages. So a zero-shot benchmark asks:
+can the model recognize and execute the task from instruction alone? It does
+not ask whether the model has never encountered the task distribution.
+\end{tcolorbox}
+
+\subsection{Few-Shot Prompting}
+
+$K$ in-context (input, output) demonstrations after the task instruction:
+
+\begin{verbatim}
+  Classify the sentiment as positive or negative.
+
+  Review: Best movie I've seen all year!
+  Sentiment: positive
+
+  Review: I want my two hours back.
+  Sentiment: negative
+
+  Review: This movie was a complete waste of time.
+  Sentiment:
+\end{verbatim}
+
+Few-shot examples serve three functions:
+\begin{enumerate}[nosep]
+  \item \textbf{Disambiguate task format}: show expected output format (``positive''/``negative'' vs ``good''/``bad'').
+  \item \textbf{Provide distribution hint}: tell the model which sub-distribution to expect (movie reviews vs product reviews).
+  \item \textbf{No weight updates}: the model uses examples at inference; weights remain frozen. This is ICL's defining property.
+\end{enumerate}
+
+Typical shot counts are 1, 3, 5, 8. Historically, few-shot evaluation rarely exceeds 32 examples, due to context-length limits and apparent marginal-return plateaus.
+
+\paragraph{Known reliability issues.}
+\begin{itemize}[nosep]
+  \item \textbf{Example selection}: different example sets produce different scores~\cite{brown2020language}.
+  \item \textbf{Example order}: the same examples in different orders can shift accuracy significantly~\cite{lu2022fantastically}.
+  \item \textbf{Prompt template}: template changes can shift MMLU scores by $\pm$10 percentage points~\cite{sclar2023quantifying}.
+\end{itemize}
+
+These sensitivities foreshadow \S\ref{sec:goodhart}: a benchmark score is not just a property of the model but of the model \emph{plus} the evaluation protocol.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.9\textwidth]{figures/ch10/fig_prompt_sensitivity.png}
+\caption{\textbf{Prompt sensitivity as measurement variance.} The same model
+can produce different benchmark scores under different templates, shot counts,
+and demonstration orders. Published scores should therefore report the full
+prompt protocol, not only the benchmark name and final accuracy.}
+\label{fig:prompt-sensitivity}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.9\textwidth]{figures/ch10/fig_icl_regime_spectrum.png}
+\caption{\textbf{ICL regimes as evaluation protocol choices.} Zero-shot,
+few-shot, and many-shot prompting are not just prompting styles; they expose
+different degrees of experimental freedom. For Project~2, few-shot evaluation
+gives the strongest trade-off between clarity, feasibility, and protocol
+control.}
+\label{fig:icl-regime-spectrum}
+\end{figure}
+
+\subsection{Many-Shot Prompting}
+\label{sec:many-shot}
+
+\paragraph{Infrastructure precondition.} Long-context models (Gemini 1.5 Pro 1M tokens, Claude 200K, GPT-4-turbo 128K) made 100+ in-context examples physically feasible starting in 2023--2024. Before that, 2--8K context windows made many-shot impossible. \textbf{Many-shot is an emergent capability of long-context infrastructure, not an algorithmic breakthrough.}
+
+\paragraph{The empirical finding.} Scaling shots from 1 $\to$ 10 $\to$ 100 $\to$ 1000 produces continuous improvement on translation, summarization, and math reasoning. On hard tasks, 100+ shots can unlock performance that few-shot completely fails at---sometimes approaching fine-tuned model performance~\cite{agarwal2024manyshot}.
+
+\paragraph{The dual-use channel.} The same ICL mechanism that enables capability also enables misuse: showing 100 examples of harmful Q\&A can induce compliance on test cases~\cite{anil2024manyshot}. The capability and safety results appeared at roughly the same time because they depend on the same infrastructure fact: long contexts made hundreds of demonstrations usable.
+
+\paragraph{Implications for evaluation methodology.} When you read a published benchmark score, the number of shots is part of the result. Llama-2's 5-shot MMLU and Gemini 1.5's 100-shot MMLU are not directly comparable. Modern benchmark reporting must specify shot regime, prompt template, and context length---because evaluation methodology now includes choices that did not exist three years ago.
+
+\begin{tcolorbox}[colback=orange!5, colframe=orange!60, title=\textbf{For Project~2: ICL at 900M Scale}]
+\begin{itemize}[nosep]
+  \item \textbf{Zero-shot}: works for simple tasks (sentiment, basic Q\&A). Limited at 900M.
+  \item \textbf{Few-shot (3--8 examples)}: the standard evaluation regime for Project~2 scale. Use this.
+  \item \textbf{Many-shot}: not applicable. Reliable many-shot ICL emerges around 3--7B; at 900M, 100 shots will likely be no better than 5 shots, possibly worse (noise dilution).
+  \item \textbf{Always}: report shot count and prompt template. A benchmark score without this metadata is uninterpretable.
+\end{itemize}
+\end{tcolorbox}
+
+\paragraph{Closing reflection.} In-context learning makes evaluation easier in one sense---no fine-tuning required, just prompt and measure---and harder in another. Every ICL regime adds a degree of freedom: $K$ examples, template $P$, context window $T$, demonstration order, and decoding settings. The model has not changed; the measurement protocol has. That protocol is part of the result.
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item ICL shifted evaluation from train-then-test to prompt-then-test, making the prompt protocol part of the measured result.
+  \item Few-shot (3--8 examples) is the standard for Project~2; many-shot requires larger models and longer context.
+  \item Shot count, example order, and prompt template all shift scores---report all of them.
+\end{itemize}
+\textit{Next: when automated benchmarks are not enough, you need human or model-based judges---with their own biases.}
+\end{quickrecap}
+
+
+%======================================================================
+\section{Behavioral Evaluation and LLM-as-Judge}
+\label{sec:behavioral-eval}
+
+Benchmarks test whether a model picks the right answer from four choices. They do not test whether the model's open-ended generation is coherent, helpful, or safe. For that, you need the third evaluation layer: behavioral evaluation.
+
+\subsection{Why Benchmarks Are Not Enough}
+
+Consider what benchmarks cannot measure:
+\begin{itemize}[nosep]
+  \item Is the model's multi-turn conversation coherent?
+  \item Does it hallucinate facts confidently?
+  \item Does it follow complex instructions faithfully?
+  \item Is its refusal behavior reasonable (neither over-cautious nor unsafe)?
+\end{itemize}
+
+None of these are measurable by multiple choice. Open-ended generation quality is a fundamentally different evaluation target---closer to what users actually experience, but harder to measure reproducibly.
+
+\subsection{Human Evaluation}
+
+The gold standard: human judges rate model outputs on dimensions like helpfulness, coherence, factual accuracy, and safety. Expert evaluation is even more reliable but prohibitively expensive at scale.
+
+\textbf{LMSYS Chatbot Arena} is the most prominent crowd-sourced human evaluation: users interact with two anonymous models side by side and vote for the better one. Pairwise comparison is more reliable than absolute scoring (relative judgments are less noisy). The Elo-rating leaderboard that results is widely cited---but biased toward conversational fluency and length.
+
+\subsection{LLM-as-Judge}
+
+Using a frontier LLM (GPT-4, Claude) to evaluate other models' outputs. MT-Bench, AlpacaEval, and Arena-Hard all use this approach.
+
+\paragraph{The appeal.} Scalable, reproducible (given the same judge model), and cheaper than human evaluation. The correlation with human preference is high ($>$0.85 in some studies)~\cite{zheng2023judging}.
+
+\paragraph{The biases.}
+\begin{itemize}[nosep]
+  \item \textbf{Verbosity bias}: judges systematically prefer longer outputs, even when concise answers are better.
+  \item \textbf{Self-preference bias}: a judge model favors outputs that resemble its own style.
+  \item \textbf{Position bias}: the first response in a pairwise comparison is sometimes preferred regardless of quality.
+\end{itemize}
+
+These biases are well-documented and partially addressable (e.g., swap position and average). But they mean LLM-as-judge scores should be read with the same caution as benchmark scores: \emph{the judge is part of the result}.
+
+\begin{tcolorbox}[colback=orange!5, colframe=orange!60, title=\textbf{For Project~2: Behavioral Evaluation}]
+Full LLM-as-judge evaluation is overkill for a 900M model. Instead:
+\begin{itemize}[nosep]
+  \item Generate 50--100 samples across diverse prompts (questions, code requests, math problems, creative writing).
+  \item Read every sample yourself. Use a checklist: coherent? on-topic? factual? repetitive? degenerate?
+  \item Save representative samples (both good and bad) in your evaluation report.
+  \item This qualitative inspection is the behavioral-layer complement to your benchmark scores.
+\end{itemize}
+\end{tcolorbox}
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Behavioral evaluation tests open-ended generation quality---what benchmarks cannot reach.
+  \item LLM-as-judge is scalable but has verbosity, self-preference, and position biases.
+  \item For Project~2, manually inspect 50--100 generation samples with a structured checklist.
+\end{itemize}
+\textit{Next: why does every benchmark eventually stop working? Because optimization corrodes measurement.}
+\end{quickrecap}
+
+
+%======================================================================
+\section{Goodhart's Law and Benchmark Decay}
+\label{sec:goodhart}
+
+``When a measure becomes a target, it ceases to be a good measure.'' Charles Goodhart's observation from monetary policy applies perfectly to LLM evaluation. This section is Chapter~10's epistemological climax---the parallel to Chapter~\ref{ch:scaling-laws}'s Kaplan--Chinchilla story.
+
+\subsection{How Benchmarks Decay}
+
+The cycle is predictable:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Release.} A new benchmark is published. It measures a meaningful capability signal---models score low, and score differences reflect genuine capability differences.
+  \item \textbf{Optimization.} Labs train against it---sometimes deliberately (including benchmark-style data in training), sometimes accidentally (benchmark content leaks into web crawls).
+  \item \textbf{Saturation.} Frontier models approach the benchmark's ceiling. Remaining score differences are dominated by prompt engineering, contamination, and statistical noise.
+  \item \textbf{Replacement.} The field needs a new benchmark. The cycle restarts.
+\end{enumerate}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.9\textwidth]{figures/ch10/fig_benchmark_decay_cycle.png}
+\caption{\textbf{Benchmark decay under Goodhart pressure.} A benchmark starts
+as a useful measurement instrument, becomes an optimization target, saturates,
+and is eventually replaced by harder or fresher tasks. The cycle does not make
+benchmarks useless; it makes benchmark age and protocol history part of the
+interpretation.}
+\label{fig:benchmark-decay-cycle}
+\end{figure}
+
+\paragraph{Historical pattern.} SQuAD (2016) $\to$ SuperGLUE (2019) $\to$ BIG-bench (2022) $\to$ MMLU (2020--2023) $\to$ MMLU-Pro / GPQA / LiveBench (2024+). Each cycle lasts roughly 2--3 years. Any published benchmark performance should be read with cycle-awareness: scores on a 2020 benchmark in 2025 are far less informative than scores on a 2024 benchmark.
+
+\subsection{Three Mechanisms of Decay}
+
+\paragraph{Contamination.} Chapter~\ref{ch:data-engineering} established this: benchmark content leaks into training data via web crawls. The model memorizes answers rather than learning capabilities. This is the most common mechanism and the one Project~2 students must actively check for.
+
+\paragraph{Teaching to the test.} Even without contamination, training on data that mimics benchmark format (e.g., multiple-choice QA from educational websites) can inflate scores without improving genuine capability. The model learns benchmark-solving heuristics: elimination strategies, format recognition, common answer patterns.
+
+\paragraph{Metric mismatch.} The benchmark measures a proxy, not the actual capability. GSM8K measures ``can the model produce the correct final number?''---not ``does the model reason correctly through intermediate steps?'' Models that guess-and-check or pattern-match to correct answers score high without genuine reasoning.
+
+\subsection{What to Do About It}
+
+Goodhart's law is not a reason to abandon benchmarks. It is a reason to \emph{read them carefully}:
+
+\begin{itemize}[nosep]
+  \item \textbf{Prefer recent benchmarks.} GPQA, MMLU-Pro, and LiveBench are designed with contamination resistance and harder items. They are more informative capability signals than MMLU or HellaSwag in 2025.
+  \item \textbf{Triangulate across layers.} A model that scores high on benchmarks (layer 2) but generates poorly (layer 3) is likely gaming the format. Cross-layer consistency is the best defense.
+  \item \textbf{Report honestly.} State the benchmark, the version, the prompt template, the contamination check result, and the confidence interval. Let readers judge for themselves.
+\end{itemize}
+
+\begin{tcolorbox}[colback=gray!8, colframe=gray!50]
+\small
+Chapter~\ref{ch:scaling-laws} taught: ``Scaling laws are not discovered; they are measured. And measurements are only as good as the protocol.'' Chapter~10's echo: \textbf{Benchmarks are not given; they are designed. And designs decay under optimization pressure.} Both chapters share the same epistemological foundation: all measurement is methodologically constructed, and the methodology must be reported, questioned, and periodically replaced.
+\end{tcolorbox}
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
+\textbf{Pause and verify.}\quad A lab reports that their new 7B model scores 72\% on MMLU, a 4-point improvement over their previous model. The test set has 14{,}042 questions. The binomial 95\% CI at 72\% accuracy is $\pm 1.96\sqrt{0.72 \times 0.28 / 14042} \approx \pm 0.74$ percentage points.
+
+\smallskip
+Is the 4-point improvement statistically significant? What if the test set had only 500 questions?
+
+\smallskip
+\emph{Answer:} With $n = 14{,}042$, the CI is $\pm$0.74pp, so 4 points is clearly significant ($>$5 CIs apart). With $n = 500$, the CI widens to $\pm 1.96\sqrt{0.72 \times 0.28 / 500} \approx \pm 3.9$ pp---the 4-point improvement is barely outside the CI, and could easily be noise. \textbf{Always compute the CI before interpreting score differences.}
+}}
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Goodhart's law: optimizing a metric degrades its usefulness as a measure.
+  \item Benchmarks decay through contamination, teaching-to-the-test, and metric mismatch; the cycle repeats every 2--3 years.
+  \item The defense is not abandoning benchmarks but triangulating across layers, using recent benchmarks, and reporting methodology transparently.
+\end{itemize}
+\textit{Next: how to report your evaluation results---honestly and completely.}
+\end{quickrecap}
+
+
+%======================================================================
+\section{Reporting Results Responsibly}
+\label{sec:reporting}
+
+This section teaches the most directly useful skill for Project~2: how to report evaluation results in a way that is scientifically honest and practically useful.
+
+\subsection{What to Report}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Validation loss curve} throughout training (not just final loss). Plot training and validation loss vs step. Cross-domain breakdown on at least 3 domains.
+  \item \textbf{Benchmark scores} with full methodology: prompt template, shot count, decoding parameters (temperature, top-$p$), number of evaluation examples, and the exact benchmark version.
+  \item \textbf{Contamination audit} result from Chapter~\ref{ch:data-engineering}: overlap rates for each benchmark.
+  \item \textbf{Confidence intervals} on all reported accuracies. Use the binomial CI: $\pm 1.96\sqrt{p(1-p)/n}$.
+  \item \textbf{Qualitative samples}: 10--20 representative generation examples (diverse prompts), including both successes and failures.
+  \item \textbf{Known limitations}: what the model cannot do, what the evaluation does not measure, what caveats apply.
+\end{enumerate}
+
+\subsection{What Not to Report (Common Bad Practices)}
+
+\begin{itemize}[nosep]
+  \item A single benchmark score with no methodology description.
+  \item Cherry-picked generation samples that show only the model's strengths.
+  \item Comparison to a baseline evaluated with a different prompt template or shot count.
+  \item Benchmark scores on contaminated data without disclosure.
+  \item Claiming ``state-of-the-art'' at a specific model size without reporting CI or accounting for prompt sensitivity.
+\end{itemize}
+
+\subsection{Calibration Honesty}
+
+State what the model is and what it is not. Example phrasing for Project~2:
+
+\begin{quote}
+\small
+``Our 900M model achieves X\% on HellaSwag (5-shot) and Y\% on ARC-Challenge (5-shot), comparable to GPT-2 1.5B (public baselines). It does not exhibit chain-of-thought reasoning or multi-step coding capability, and should not be compared to frontier models on tasks requiring those abilities. Contamination audit found $<$0.1\% overlap with all evaluated benchmarks.''
+\end{quote}
+
+This kind of calibrated, honest reporting is what separates a good research report from a marketing document. It is the evaluation counterpart of Chapter~\ref{ch:data-engineering}'s ``document everything'' philosophy.
+
+\subsection{Monitoring During Training}
+
+Evaluation is not a one-time event at the end of training. Throughout training:
+
+\begin{itemize}[nosep]
+  \item \textbf{Validation loss}: every 200--500 steps. Already part of the training loop from Chapter~\ref{ch:distributed-training}'s monitoring plan.
+  \item \textbf{Sample generation}: every 1--2K steps. Save 10--20 samples at each checkpoint. Look for qualitative progression: early training produces gibberish, mid-training produces grammatical but generic text, late training produces coherent topical content.
+  \item \textbf{Benchmark checks}: not every checkpoint (too expensive). Run at 50\% and 100\% of training. Compare to detect capability emergence.
+\end{itemize}
+
+The last 10--20\% of training often has disproportionate influence on final capability---Chapter~\ref{ch:data-engineering}'s data annealing already hinted at this. If your mid-training evaluation shows weak reasoning, consider whether your data mixture's final-stage composition is the bottleneck.
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Report benchmark scores with full methodology: prompt template, shot count, decoding settings, contamination audit, and confidence intervals.
+  \item Include both successes and failures in qualitative samples.
+  \item Monitor evaluation throughout training, not just at the end.
+\end{itemize}
+\textit{Next: putting it all together into a complete Project~2 evaluation workflow.}
+\end{quickrecap}
+
+
+%======================================================================
+\section{Project~2 Evaluation Workflow}
+\label{sec:eval-workflow}
+
+Like Chapter~\ref{ch:data-engineering}'s data workflow, this section integrates the chapter's concepts into an end-to-end evaluation plan for Project~2.
+
+\subsection{The Workflow}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch10/fig_evaluation_workflow.png}
+\caption{\textbf{Project~2 evaluation workflow.} The deliverable should connect
+training-time monitoring, final benchmarks, contamination checks, qualitative
+inspection, and calibrated reporting. Any missing stage weakens the
+interpretability of the others.}
+\label{fig:evaluation-workflow}
+\end{figure}
+
+\begin{enumerate}
+  \item \textbf{During training} (continuous):
+  \begin{itemize}[nosep]
+    \item Validation loss every 200--500 steps, cross-domain breakdown on 3--4 domains.
+    \item Sample generation every 1--2K steps; save samples at each checkpoint.
+  \end{itemize}
+
+  \item \textbf{Final evaluation} ($\sim$5\% of total compute budget):
+  \begin{itemize}[nosep]
+    \item 3--4 benchmarks: HellaSwag (5-shot), ARC-Easy (5-shot), ARC-Challenge (5-shot), small MMLU subset (5-shot). Add GSM8K or HumanEval if your data mix includes math or code.
+    \item Contamination audit: reference your Chapter~\ref{ch:data-engineering} contamination check.
+    \item Confidence intervals on all reported accuracies.
+  \end{itemize}
+
+  \item \textbf{Behavioral evaluation}:
+  \begin{itemize}[nosep]
+    \item Generate 50--100 samples across diverse prompts.
+    \item Read every sample. Score with checklist: coherent, on-topic, factual, not repetitive, not degenerate.
+    \item Select 10--20 representative samples (good and bad) for the report.
+  \end{itemize}
+
+  \item \textbf{Write evaluation report} using the template below.
+\end{enumerate}
+
+\subsection{Evaluation Report Template}
+
+Your Project~2 deliverable should include an evaluation report covering:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Section} & \textbf{Contents} \\
+\midrule
+Loss curves & Training and validation loss vs step. Cross-domain breakdown. \\
+Benchmarks & Score, prompt template, shot count, decoding settings, $n$, CI. \\
+Contamination & Reference to data engineering plan; overlap rates per benchmark. \\
+Qualitative samples & 10--20 examples with annotations (good and bad). \\
+Comparison & Scores vs public baselines (GPT-2, Pythia) with matched methodology. \\
+Known limitations & What the model cannot do; what the evaluation does not measure. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+This template pairs with Chapter~\ref{ch:data-engineering}'s data engineering plan: together, they form the documentation backbone of Project~2.
+
+\subsection{Time Budget}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lrX@{}}
+\toprule
+\textbf{Task} & \textbf{Est.\ time} & \textbf{Notes} \\
+\midrule
+Validation loss monitoring & Built-in & Part of training loop \\
+Final benchmark evaluation & 2--4 hours & Inference on 3--4 benchmarks \\
+Qualitative sample generation & 1--2 hours & 50--100 prompts \\
+Sample inspection + annotation & 2--3 hours & Manual reading \\
+Report writing & 2--4 hours & Fill template, include figures \\
+\midrule
+\textbf{Total} & \textbf{7--13 hours} & $\sim$0.5--1 day of a 7-day project \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Evaluation is cheaper than data engineering ($\sim$12--24 hours) but equally non-negotiable. Do not skip qualitative inspection to ``save time''---a benchmark score without behavioral context is a number without meaning.
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
+\textbf{Pause and verify.}\quad Your 900M model scores 38\% on HellaSwag (5-shot) and 32\% on ARC-Challenge (5-shot). HellaSwag has 10{,}042 items; ARC-Challenge has 1{,}172 items.
+
+\smallskip
+Compute the 95\% CI for each score. Are the scores meaningfully different, or could they reflect the same underlying capability level?
+
+\smallskip
+\emph{Answer:} HellaSwag CI: $\pm 1.96\sqrt{0.38 \times 0.62 / 10042} \approx \pm 0.95$ pp. ARC-Challenge CI: $\pm 1.96\sqrt{0.32 \times 0.68 / 1172} \approx \pm 2.67$ pp. The scores (38\% vs 32\%) differ by 6 pp, which exceeds the sum of CIs ($\sim$3.6 pp), so the difference is likely real---the model performs meaningfully better on commonsense completion than on science reasoning. But note: they are \emph{different benchmarks measuring different things}, so the comparison is conceptual, not statistical.
+}}
+
+
+%----------------------------------------------------------------------
+\section*{Summary}
+
+\paragraph{What this chapter established.} Part~II has been about producing a model. This chapter asked the harder question: \emph{how do you know what you produced?} The answer is: imperfectly, through three layers of evidence---loss-based measurement (precise, weak), benchmark-based evaluation (scalable, fragile), and behavioral inspection (realistic, noisy). No single layer is sufficient. Mature evaluation combines all three.
+
+\paragraph{The measurement instruments are under construction.} Evaluation is not a solved problem. Benchmarks decay under optimization pressure (Goodhart's law). Prompt templates shift scores by double-digit percentages. Contamination inflates results. LLM-as-judge has systematic biases. The field's measurement instruments are improving, but they are not settled---and the honest acknowledgment of this uncertainty is itself a form of rigor.
+
+\paragraph{The protocol is part of the result.} This chapter's epistemological lesson echoes Chapter~\ref{ch:scaling-laws}: just as scaling-law exponents depend on measurement protocol, benchmark scores depend on shot count, prompt template, and contamination status. Chapter~\ref{ch:data-engineering} taught that data choices encode values. This chapter teaches that evaluation choices encode assumptions about what ``capability'' means. \textbf{Benchmarks are not given; they are designed. And designs decay under optimization pressure.}
+
+\paragraph{One sentence.} Evaluate responsibly: combine loss monitoring, benchmark scores with confidence intervals, and qualitative inspection---and report what you measured, how you measured it, and what you did not measure.
+
+\paragraph{Part~II retrospect.} Five chapters, one argument: that scaling a Transformer to production size is not a quantitative continuation of small-scale training but a qualitatively different engineering discipline.
+
+\begin{quote}
+Memory became a constraint (Chapter~\ref{ch:what-changes}).\\
+Communication became a cost (Chapter~\ref{ch:distributed-training}).\\
+Compute became an allocation problem (Chapter~\ref{ch:scaling-laws}).\\
+Data became a design surface (Chapter~\ref{ch:data-engineering}).\\
+Evaluation became a measurement problem (this chapter).
+\end{quote}
+
+Each shift has the same shape: a property that was invisible at small scale becomes dominant at large scale, and the conceptual tools that worked before stop being sufficient. Part~II taught you to navigate these shifts. Part~III asks the next question: you have a pretrained model---now how do you turn it into something people actually use?
+
+\paragraph{What comes next.} The model you trained in Project~2 is a language model---it predicts the next token. It does not follow instructions, refuse harmful requests, or reason step-by-step about hard problems. The gap between ``pretrained model'' and ``useful product'' is where most of modern LLM research now lives: instruction tuning, preference alignment, reinforcement learning for reasoning. Part~III is shorter than Part~II in compute but richer in conceptual territory---the techniques are younger, the empirical understanding less consolidated, and the stakes higher.
+
+
+%----------------------------------------------------------------------
+\section*{Key Equations at a Glance}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}p{5cm}X@{}}
+\toprule
+\textbf{Quantity} & \textbf{Expression} \\
+\midrule
+Perplexity & PPL $= e^L$ \\
+Bits-per-byte & BPB $= L / \ln 2 \times (\text{tokens}/\text{bytes})$ \\
+Binomial CI (95\%) & $\pm 1.96\sqrt{p(1-p)/n}$ \\
+CI at $p = 0.50$, $n = 500$ & $\pm 4.4$ percentage points \\
+CI at $p = 0.80$, $n = 14{,}042$ & $\pm 0.66$ percentage points \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+
+%----------------------------------------------------------------------
+\section*{Key Readings}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Brown et al., 2020.} ``Language Models are Few-Shot Learners'' (GPT-3). Introduced few-shot ICL as the standard evaluation paradigm. Start here for the paradigm shift.
+  \item \textbf{Liang et al., 2022.} ``Holistic Evaluation of Language Models'' (HELM). First systematic, multi-metric evaluation framework. Sets the standard for transparent benchmarking.
+  \item \textbf{Sclar et al., 2023.} ``Quantifying Language Models' Sensitivity to Spurious Features in Prompt Design.'' Demonstrates that prompt template alone can shift scores by $\pm$10pp.
+  \item \textbf{Zheng et al., 2023.} ``Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena.'' Establishes LLM-as-judge methodology and documents its biases.
+  \item \textbf{Agarwal et al., 2024.} ``Many-Shot In-Context Learning.'' Demonstrates continuous improvement up to 1000+ shots on long-context models.
+  \item \textbf{Anil et al., 2024.} ``Many-shot Jailbreaking.'' The safety counterpart---ICL's dual-use nature.
+  \item \textbf{Schaeffer et al., 2023.} ``Are Emergent Abilities of Large Language Models a Mirage?'' Central to understanding whether benchmark transitions are real or metric artifacts (also cited in Chapter~\ref{ch:scaling-laws}).
+\end{enumerate}
+
+\flushbottom
