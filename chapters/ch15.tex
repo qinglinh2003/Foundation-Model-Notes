@@ -1,83 +1,647 @@
 \chapter{RLHF}
 \label{ch:rlhf}
+\raggedbottom
 
-% Core question: How do you use RL to align a language model to human preferences?
-%
-% Length estimate: 20-25 pages
-% Writing order: 4th (builds on Ch.13 preference data/RM + Ch.14 RL machinery)
-%
-% InstructGPT thread: MAIN CASE STUDY role. By end of this chapter, students have
-% InstructGPT as a fully-developed mental model — but understood as historical
-% foundation, not current best practice.
+In March 2022, OpenAI published a paper with a striking headline result: human labelers preferred outputs from a 1.3-billion-parameter model over outputs from GPT-3, which had 175 billion parameters---over 100 times larger~\cite{ouyang2022instructgpt}. The smaller model was not more knowledgeable. It had not seen more data. It had been trained on a different \emph{kind} of signal. First, supervised fine-tuning on human demonstrations. Then, a reward model trained on human comparisons. Finally, PPO---the policy-gradient algorithm from Chapter~\ref{ch:rl-foundations}---optimizing the language model against that reward model while staying close to the SFT checkpoint. Three stages, each building on the last. The result was InstructGPT: the first production-scale demonstration that reinforcement learning from human feedback could transform a capable but unhelpful base model into one that people actually preferred to use.
 
-\textit{Placeholder --- full content follows the section outline below.}
+Chapter~\ref{ch:preference-learning} taught you to optimize a language model from preferences without RL: DPO collapses the reward-model-plus-PPO pipeline into a single supervised loss, and for many alignment tasks, that is sufficient. But \S\ref{sec:dpo-limits} was honest about the boundary: DPO is built around relative comparisons, so dense scalar feedback, multi-dimensional rubric scores, and iterative on-policy optimization are not its natural form. Chapter~\ref{ch:rl-foundations} then gave you the RL machinery---MDPs, REINFORCE, PPO, KL constraints---as abstract tools. This chapter puts the machinery to work. It is the chapter where the three-stage pipeline from the opening paragraph becomes fully technical.
 
+Think of the progression across Part~III like learning to drive. Chapter~\ref{ch:instruction-tuning} taught you to follow driving instructions: turn here, signal there, park like this. Chapter~\ref{ch:preference-learning} taught you to learn from passenger reactions: they preferred the smooth lane change over the abrupt one. This chapter teaches you to drive with a driving instructor in the car---someone who scores every maneuver in real time, and you adjust your technique continuously to maximize that score. The driving instructor is the reward model. The score is imperfect---the instructor has preferences and blind spots---and much of this chapter is about managing that imperfection.
+
+\paragraph{What this chapter covers.} Three questions organize the chapter:
+
+\begin{enumerate}[nosep]
+  \item \textbf{How does the full pipeline work?} The InstructGPT three-stage recipe---SFT, reward modeling, PPO---as a complete system, with each component connected to what you learned in Chapters~\ref{ch:instruction-tuning}, \ref{ch:preference-learning}, and~\ref{ch:rl-foundations} (\S\ref{sec:three-stage}--\S\ref{sec:ppo-lm}).
+  \item \textbf{What goes wrong?} The KL constraint, reward hacking, and the fundamental tension between exploiting a learned proxy and staying faithful to human intent (\S\ref{sec:kl-deep-dive}--\S\ref{sec:reward-hacking}).
+  \item \textbf{Where does RLHF stand today?} Variants, industry adoption, and why you should learn this pipeline even though DPO has become the open-source default (\S\ref{sec:rlhf-variants}--\S\ref{sec:why-learn-rlhf}).
+\end{enumerate}
+
+\paragraph{Chapter thesis.} \emph{RLHF is the engineering of optimizing against an imperfect proxy.} The reward model is not a ground truth---it is a learned approximation of human preferences, with systematic biases, limited coverage, and finite capacity. The KL constraint, the over-optimization literature, and the entire family of mitigations taught in this chapter are all responses to one fact: the reward model can be exploited if you optimize against it hard enough. Understanding this tension is the conceptual core of RLHF, and it carries directly into Chapter~\ref{ch:reasoning-rl}'s reasoning RL, where verifiable rewards reduce one class of proxy error but introduce their own specification choices.
+
+\paragraph{Running example.} Your 3B model from Project~3 has been instruction-tuned (Chapter~\ref{ch:instruction-tuning}) and DPO-aligned (Chapter~\ref{ch:preference-learning}). Now suppose you want to go further: you have a trained reward model that scores responses on a 5-dimensional rubric (helpfulness, correctness, harmlessness, conciseness, relevance), and you want to optimize your model against all five simultaneously. You could convert the rubric into pairwise preferences and run DPO, but the direct object you now have is a scalar reward. RLHF is the natural machinery for optimizing that scalar while controlling policy drift. Every section in this chapter will be instantiated on this setup.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch15/fig_three_stage_pipeline.png}
+\caption{\textbf{The three-stage RLHF pipeline.} Stage~1: supervised fine-tuning on human demonstrations (Chapter~\ref{ch:instruction-tuning}). Stage~2: reward model training on human preference pairs (Chapter~\ref{ch:preference-learning}, \S\ref{sec:bradley-terry}--\S\ref{sec:rm-failures}). Stage~3: PPO optimization of the policy against the frozen reward model, with a KL penalty to the SFT checkpoint (this chapter). Each stage produces a model that feeds into the next.}
+\label{fig:three-stage-pipeline}
+\end{figure}
+
+
+\subsection*{Learning Objectives}
+
+After completing this chapter, you should be able to:
+
+\begin{enumerate}
+  \item Describe the InstructGPT three-stage pipeline (SFT $\to$ RM $\to$ PPO) and explain the role of each stage.
+  \item Explain how a reward model is used during PPO training as a frozen scoring function.
+  \item Implement (conceptually) the PPO training loop for language models, including rollout generation, reward scoring, advantage estimation, and policy updates.
+  \item Articulate why the KL constraint to the reference policy is essential, and connect it to the KL-constrained objective from Chapter~\ref{ch:preference-learning}.
+  \item Explain reward hacking as over-optimization of a learned proxy, and describe at least three mitigation strategies.
+  \item Compare RLHF with DPO in terms of capability, operational complexity, and current industry adoption.
+\end{enumerate}
+
+
+\subsection*{Notation}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Symbol & Meaning \\
+\midrule
+$\pi_\theta$ & Policy model (the language model being optimized) \\
+$\pi_{\text{ref}}$ & Reference policy (frozen SFT checkpoint) \\
+$\pi_{\text{SFT}}$ & SFT model (output of Stage 1) \\
+$r_\phi(x, y)$ & Reward model (parameterized by $\phi$, frozen during PPO) \\
+$V_\psi(s)$ & Value model / critic (parameterized by $\psi$) \\
+$\beta$ & KL penalty coefficient \\
+$\epsilon$ & PPO clipping parameter (typically 0.2) \\
+$\hat{A}_t$ & GAE advantage estimate at token $t$ \\
+$\rho_t$ & Importance sampling ratio $\pi_\theta(a_t \mid s_t) / \pi_{\text{old}}(a_t \mid s_t)$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+
+\subsection*{Timeline of Key Contributions}
+
+\begin{center}
+\begin{tabular}{lp{11cm}}
+\toprule
+Year & Contribution \\
+\midrule
+2017 & Christiano et al.\ demonstrate learning from human preferences on Atari and simulated robotics~\cite{christiano2017deep}. \\
+2019 & Ziegler et al.\ apply PPO to text summarization with human feedback~\cite{ziegler2019finetuning}---the first RLHF application to language models. \\
+2020 & Stiennon et al.\ scale RLHF for summarization with larger models and more preference data~\cite{stiennon2020summarize}. \\
+2022a & Ouyang et al.\ publish InstructGPT: the three-stage SFT $\to$ RM $\to$ PPO pipeline at production scale~\cite{ouyang2022instructgpt}. \\
+2022b & Bai et al.\ (Anthropic) introduce Constitutional AI: RLAIF with self-critique and principles~\cite{bai2022constitutional}. \\
+2023 & Touvron et al.\ describe Llama~2-Chat's RLHF recipe with rejection sampling and iterative RM training~\cite{touvron2023llama2}. \\
+2024+ & Open-source community shifts toward SFT + DPO as default; full RLHF reserved for frontier alignment and reasoning RL. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+
+%----------------------------------------------------------------------
 \section{The Three-Stage Pipeline}
 \label{sec:three-stage}
 
-% InstructGPT as anchor case study: SFT -> RM -> PPO.
-% How this chapter builds on Ch.11 (SFT) and Ch.13 (RM, preference data).
-% Ch.14 provides the RL vocabulary used throughout.
+InstructGPT~\cite{ouyang2022instructgpt} established the template that every subsequent RLHF system either follows or deliberately departs from. The pipeline has three stages, and you have already learned the first two:
 
+\begin{enumerate}[nosep]
+  \item \textbf{Stage 1: Supervised fine-tuning.} Start with a pretrained language model. Fine-tune it on high-quality instruction-response demonstrations. This is Chapter~\ref{ch:instruction-tuning}. The output is $\pi_{\text{SFT}}$.
+  \item \textbf{Stage 2: Reward model training.} Collect pairwise human comparisons (``Response A is better than Response B''). Train a reward model $r_\phi$ using the Bradley-Terry loss from Chapter~\ref{ch:preference-learning}, \S\ref{sec:bradley-terry}. The output is a frozen scoring function that maps (prompt, response) to a scalar.
+  \item \textbf{Stage 3: RL optimization.} Initialize the policy $\pi_\theta$ from $\pi_{\text{SFT}}$. Generate responses, score them with $r_\phi$, and update $\pi_\theta$ using PPO with a KL penalty to $\pi_{\text{ref}} = \pi_{\text{SFT}}$. This is what this chapter teaches.
+\end{enumerate}
+
+\subsection{Why Three Stages?}
+
+Each stage addresses a different limitation of the previous one. SFT alone produces a model that follows instructions but cannot learn from comparative feedback---it needs a ``right answer'' to imitate. The reward model captures comparative feedback but is a passive scoring function---it does not generate text. PPO closes the loop: the model generates, the reward model scores, and the policy gradient pushes the model toward higher-scoring outputs.
+
+The three stages are not independent. Stage 1 determines the quality of the initial policy: a good SFT checkpoint gives PPO a strong starting point. Stage 2 determines the quality of the reward signal: a poorly trained reward model produces a poorly optimized policy. Stage 3 determines how aggressively the policy exploits that signal. Get any stage wrong, and the final model suffers.
+
+\subsection{InstructGPT's Concrete Numbers}
+
+InstructGPT's implementation details make the pipeline tangible:
+
+\begin{itemize}[nosep]
+  \item \textbf{Stage 1}: 13{,}000 demonstrations from 40 human labelers. SFT for 16 epochs. Models from 1.3B to 175B parameters.
+  \item \textbf{Stage 2}: 33{,}000 comparison pairs. Reward model initialized from the SFT checkpoint with the unembedding layer replaced by a scalar head.
+  \item \textbf{Stage 3}: 31{,}000 prompts (no new demonstrations). PPO initialized from the SFT model, with a KL penalty to the SFT reference and batches of sampled model responses. The paper reports the relevant hyperparameters, but the important lesson here is the structure: the policy learns from reward-model scores rather than new demonstrations.
+\end{itemize}
+
+Notice the data scale: only 13K demonstrations, 33K comparisons, and 31K prompts. This is tiny compared to pretraining data. The lesson is not that RLHF needs massive data---it is that the \emph{kind} of data changes.
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item The InstructGPT pipeline has three stages: SFT (demonstrations) $\to$ RM (comparisons) $\to$ PPO (RL optimization).
+  \item Each stage builds on the previous. Poor SFT $\to$ poor starting point. Poor RM $\to$ poor reward signal.
+  \item The pipeline uses modest data volumes ($\sim$10K--30K per stage). The signal type, not the signal volume, is the lever.
+\end{itemize}
+\textit{Next: how does the reward model function during PPO training?}
+\end{quickrecap}
+
+
+%----------------------------------------------------------------------
 \section{Reward Model in the RLHF Loop}
 \label{sec:rm-in-loop}
 
-% Reference to Ch.13 reward model training.
-% RM's role during PPO: frozen scoring function.
-% RM as imperfect proxy for human preferences.
+Chapter~\ref{ch:preference-learning} (\S\ref{sec:reward-model}--\S\ref{sec:rm-failures}) taught you to train a reward model. This section explains its role \emph{during} PPO---a different context with different failure modes.
 
+\subsection{The Reward Model as Frozen Oracle}
+
+During PPO training, the reward model is frozen: its parameters $\phi$ do not change. The policy $\pi_\theta$ generates a response $y$ to a prompt $x$, and the reward model assigns a scalar score $r_\phi(x, y)$. This score is the \emph{only} learning signal for Stage 3. No human is in the loop. The reward model is a proxy---a learned approximation of what humans would have preferred---and the policy is optimizing against that proxy.
+
+This setup creates a fundamental asymmetry that is worth tracing step by step, because it is the root cause of reward hacking (\S\ref{sec:reward-hacking}):
+
+\begin{enumerate}[nosep]
+  \item The reward model's training data comes from $\pi_{\text{SFT}}$: human annotators compared pairs of responses generated by the SFT model.
+  \item PPO updates push $\pi_\theta$ away from $\pi_{\text{SFT}}$. The KL constraint limits this drift but does not eliminate it.
+  \item As the policy drifts, it generates responses that are \emph{out of distribution} for the reward model---responses the RM has never scored during training.
+  \item The reward model must \emph{extrapolate} to score these responses. Extrapolation can be systematically wrong: the RM may assign high scores to artifacts (length, formatting, hedging) that correlate with quality in the training distribution but do not cause quality outside it.
+  \item The policy, optimizing against the RM's scores, amplifies precisely these extrapolation artifacts.
+\end{enumerate}
+
+\noindent This is not a one-time failure but a positive feedback loop: the more the policy drifts, the more the RM must extrapolate, the more exploitable its scores become. Mitigation~\#5 in \S\ref{sec:reward-hacking}---periodic RM retraining on the current policy's outputs---directly breaks this loop by pulling the RM's training distribution back toward the policy's current behavior.
+
+\subsection{Reward Decomposition in Practice}
+
+InstructGPT uses a modified reward during PPO:
+\begin{equation}
+\label{eq:rlhf-reward}
+R(x, y) = r_\phi(x, y) - \beta \, D_{\text{KL}}\!\left[\pi_\theta({\cdot} \mid x) \| \pi_{\text{ref}}({\cdot} \mid x)\right]
+\end{equation}
+
+The first term is the reward model's score. The second term is the KL penalty that keeps the policy close to the reference. In implementation, the KL penalty is often computed per-token and added to the per-token reward signal before advantage estimation. This means the ``reward'' that PPO sees is not just the reward model's output---it includes a penalty for deviating from the reference policy at every token position.
+
+\begin{tcolorbox}[colback=orange!5, colframe=orange!60, title=\textbf{For Project~3: Reward Model During PPO}]
+\begin{itemize}[nosep]
+  \item Freeze your reward model completely during PPO. Do not update $\phi$.
+  \item The reward model should be a separate model from the policy. Do not share weights between the reward model and the policy during Stage~3.
+  \item If using LoRA (Chapter~\ref{ch:peft}), the reward model can share the frozen base with the policy, but the LoRA adapters must be separate and frozen for the RM.
+  \item Monitor the reward model's scores on a held-out validation set throughout PPO training. If scores rise steadily on training prompts but stagnate or drop on validation prompts, the policy is likely hacking the reward model.
+\end{itemize}
+\end{tcolorbox}
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item During PPO, the reward model is frozen. It is a proxy for human judgment, not ground truth.
+  \item The policy generates out-of-distribution responses that the RM must score by extrapolation.
+  \item The effective reward combines the RM score and a per-token KL penalty to the reference policy.
+\end{itemize}
+\textit{Next: how does PPO actually update the language model?}
+\end{quickrecap}
+
+
+%----------------------------------------------------------------------
 \section{PPO for Language Models}
 \label{sec:ppo-lm}
 
-% Ch.14 PPO instantiated on LLM trajectories.
-% Per-token vs per-sequence reward attribution.
-% Concrete: InstructGPT hyperparameters, training details.
-% Implementation: value head, rollout buffer, mini-batch updates.
+Chapter~\ref{ch:rl-foundations} taught PPO as an algorithm. This section instantiates it on language model training---where the ``environment'' is a prompt, the ``trajectory'' is a generated response, and the ``reward'' comes from a frozen reward model.
 
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch15/fig_ppo_training_loop.png}
+\caption{\textbf{The PPO training loop for RLHF.} Each iteration: (1)~sample a batch of prompts, (2)~generate responses from the current policy, (3)~score with the frozen reward model and compute per-token KL penalties, (4)~estimate advantages using GAE, (5)~update the policy with the clipped PPO objective, (6)~update the value model. The reference policy remains frozen throughout.}
+\label{fig:ppo-training-loop}
+\end{figure}
+
+\subsection{The Training Loop}
+
+Each PPO iteration proceeds in six steps:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Rollout.} Sample a batch of prompts from the training set. For each prompt $x$, generate a complete response $y = (y_1, y_2, \ldots, y_T)$ by autoregressive sampling from $\pi_\theta$. This is the most expensive step in wall-clock time: generating 256 responses of 200--500 tokens each requires full autoregressive decoding, which is memory-bound and slow. Production RLHF pipelines use optimized inference engines (vLLM, SGLang, TensorRT-LLM) for rollout generation; naive HuggingFace \texttt{generate()} can be 5--10$\times$ slower.
+  \item \textbf{Scoring.} Pass each (prompt, response) pair through the frozen reward model to obtain $r_\phi(x, y)$. Compute the per-token KL penalty $\beta \log \frac{\pi_\theta(y_t \mid x, y_{<t})}{\pi_{\text{ref}}(y_t \mid x, y_{<t})}$ at each position.
+  \item \textbf{Advantage estimation.} Use GAE (Chapter~\ref{ch:rl-foundations}, \S\ref{sec:ppo}) with the value model $V_\psi$ to estimate per-token advantages $\hat{A}_t$.
+  \item \textbf{Policy update.} Compute the clipped PPO objective and update $\theta$ using gradient ascent over multiple mini-batches (see below).
+  \item \textbf{Value update.} Fit $V_\psi$ to the observed returns using a clipped regression loss.
+  \item \textbf{Log and checkpoint.} Record the reward model score, KL divergence, value loss, and policy entropy. These diagnostics are essential for detecting reward hacking (\S\ref{sec:reward-hacking}).
+\end{enumerate}
+
+This loop is the driving-instructor metaphor made operational. The policy drives a lap (rollout), the instructor scores the lap (reward model), the examiner estimates which maneuvers mattered (value model and advantages), and the driver updates technique slightly (PPO clipping and KL control). The important word is \emph{slightly}: PPO is useful because it lets the model learn from fresh reward feedback without letting one noisy batch rewrite the policy.
+
+\subsection{Hyperparameters That Matter}
+
+InstructGPT's training details make the loop concrete:
+
+\begin{center}
+\begin{tabular}{lp{8.5cm}}
+\toprule
+\textbf{Hyperparameter} & \textbf{InstructGPT / typical range} \\
+\midrule
+Rollout batch size & 256--512 prompts per iteration \\
+Response length & 200--500 tokens (up to 2{,}048) \\
+PPO epochs per batch & 1--4 passes over each rollout batch \\
+PPO mini-batch size & 32--64 (subdivisions of the rollout batch) \\
+Learning rate & $1 \times 10^{-6}$ to $5 \times 10^{-6}$ (much smaller than SFT) \\
+GAE $\lambda$ & 0.95--1.0 \\
+KL coefficient $\beta$ & 0.02 (InstructGPT); 0.04--0.1 typical for smaller models \\
+Clip parameter $\epsilon$ & 0.2 (standard PPO) \\
+Total PPO steps & A few hundred to a few thousand \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Two points deserve emphasis. First, the \textbf{PPO epochs per batch} parameter is unusual compared to standard SGD training. In each iteration, the policy generates a fixed batch of rollouts, and then the same batch is used for multiple gradient update passes. This is efficient because rollout generation is expensive (step~1 dominates wall-clock time), so you want to extract as much learning as possible from each batch. But too many PPO epochs per batch causes the policy to move far from the rollout-generating policy, violating the importance-sampling assumption that PPO's clipping is designed to protect.
+
+Second, the \textbf{learning rate} is 10--100$\times$ smaller than for SFT. The SFT checkpoint is already a good policy; RL optimization is a refinement, not a retraining. Too large a learning rate causes catastrophic forgetting---the same phenomenon Chapter~\ref{ch:instruction-tuning} (\S\ref{sec:sft-limits}) warned about for aggressive SFT, but amplified because the RL gradient signal is noisier than supervised gradients.
+
+\subsection{The PPO Dashboard}
+
+RLHF is not a ``set it and forget it'' training run. The model can improve, stall, or quietly over-optimize the reward model while the loss curve still looks healthy. A useful PPO dashboard tracks at least six quantities:
+
+\begin{center}
+\begin{tabular}{lp{8.5cm}}
+\toprule
+\textbf{Metric} & \textbf{What it tells you} \\
+\midrule
+Reward model score & Whether the policy is learning to satisfy the learned proxy. Rising is necessary but not sufficient. \\
+KL to reference & How far the policy has drifted from the SFT checkpoint. Rapid growth is the first warning sign. \\
+Human or held-out win rate & Whether reward gains transfer to genuine preference improvement. This is the metric that decides when to stop. \\
+Average response length & Whether the policy is exploiting length bias. Sudden length growth is common in RLHF. \\
+Policy entropy & Whether the policy is collapsing to a narrow set of high-reward templates. \\
+Value loss / explained variance & Whether the critic is tracking returns well enough for stable advantage estimates. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The key diagnostic is not any single curve; it is the \emph{relationship} between curves. Reward increasing while KL stays moderate and held-out win rate improves is healthy. Reward increasing while KL and response length explode is not. Reward increasing while policy entropy collapses means the driver has found one maneuver the instructor likes and is repeating it everywhere.
+
+\subsection{Per-Token vs Per-Sequence Reward}
+
+A critical implementation detail: the reward model produces a \emph{single} scalar for the entire response, but PPO needs per-token rewards for advantage estimation. Two approaches are standard:
+
+\begin{itemize}[nosep]
+  \item \textbf{Terminal reward.} Assign the full reward $r_\phi(x, y)$ to the last token $y_T$ and zero to all other tokens. The KL penalty is applied per-token. This is InstructGPT's approach and the most common in practice.
+  \item \textbf{Token-level reward shaping.} Distribute some reward signal to intermediate tokens using the value model's predictions. Less common but can reduce variance.
+\end{itemize}
+
+With terminal reward, the per-token reward signal is:
+\begin{equation}
+\label{eq:per-token-reward}
+r_t = \begin{cases}
+r_\phi(x, y) - \beta \log \frac{\pi_\theta(y_t \mid s_t)}{\pi_{\text{ref}}(y_t \mid s_t)} & \text{if } t = T \\
+- \beta \log \frac{\pi_\theta(y_t \mid s_t)}{\pi_{\text{ref}}(y_t \mid s_t)} & \text{otherwise}
+\end{cases}
+\end{equation}
+
+Most tokens receive only the KL penalty as their reward signal. The reward model's contribution arrives only at the end. GAE then propagates that terminal reward backward through the sequence via the value function.
+
+\subsection{The Value Model}
+
+Chapter~\ref{ch:rl-foundations} (\S\ref{sec:ppo}) introduced the value function $V_\psi(s)$ as the baseline for advantage estimation. In RLHF, the value model is typically:
+
+\begin{itemize}[nosep]
+  \item \textbf{Architecture.} The same Transformer backbone as the policy, with the unembedding head replaced by a scalar projection. It takes a state $s_t$ (prompt + tokens so far) and outputs a single number: the predicted return from position $t$ onward.
+  \item \textbf{Initialization.} Commonly initialized from the reward model's weights---the reward model already maps (prompt, response) to scalars, so it provides a reasonable starting point for value prediction. Some implementations initialize from the SFT checkpoint instead.
+  \item \textbf{Training objective.} Supervised regression: minimize the squared error between $V_\psi(s_t)$ and the observed return $R_t = \sum_{k=t}^{T} r_k$. In PPO, value updates are often clipped to prevent large jumps:
+  \begin{equation}
+  \mathcal{L}^{V} = \max\!\left[(V_\psi(s_t) - R_t)^2, \;(\text{clip}(V_\psi(s_t), V_{\text{old}}(s_t) \pm \epsilon_V) - R_t)^2\right]
+  \end{equation}
+  \item \textbf{Cost.} The value model is roughly the same size as the policy. This is the fourth model-sized object that Chapter~\ref{ch:preference-learning} (\S\ref{sec:rlhf-motivation}) identified as making RLHF operationally heavy. GRPO (Chapter~\ref{ch:reasoning-rl}) eliminates the value model entirely by using a group-level mean reward as the baseline---one of its key simplifications.
+\end{itemize}
+
+\subsection{Four Models in Memory}
+
+RLHF PPO requires four models simultaneously:
+
+\begin{itemize}[nosep]
+  \item \textbf{Policy} $\pi_\theta$: the model being trained. Trainable.
+  \item \textbf{Reference} $\pi_{\text{ref}}$: the frozen SFT checkpoint. Used for KL computation.
+  \item \textbf{Reward model} $r_\phi$: frozen. Scores responses.
+  \item \textbf{Value model} $V_\psi$: the critic. Trainable. Initialized from the reward model or SFT checkpoint.
+\end{itemize}
+
+For a 7B model, this means four model-sized objects in memory---naively $4 \times 14$~GB $= 56$~GB in bf16, plus optimizer states for the two trainable models (policy and value), plus activation memory during rollout generation. The true peak memory for 7B full-precision RLHF can exceed 150~GB.
+
+This is why Chapter~\ref{ch:peft} exists: with LoRA, the policy uses the SFT base plus a small adapter, the reference \emph{is} the same base (no extra cost), the value model can share the reward model's base with its own adapter, and peak memory drops to a fraction of the naive estimate. In the driving analogy from this chapter's opening: PEFT lets you practice driving with all four participants (driver, instructor, examiner, navigator) present in a compact car instead of requiring a bus.
+
+\begin{tcolorbox}[colback=blue!5, colframe=blue!40, title=\textbf{Worked Example: One PPO Step}]
+Suppose your 3B Project~3 model receives the prompt:
+
+\medskip
+\noindent\texttt{Explain why a transformer uses attention.}
+
+\medskip
+\noindent The current policy samples four responses. The reward model scores them as $[1.2,\ 0.4,\ 0.9,\ -0.1]$. The value model predicted $[0.7,\ 0.6,\ 0.5,\ 0.3]$ before seeing the terminal rewards. A simplified advantage estimate is therefore:
+
+\[
+\hat{A} \approx [0.5,\ -0.2,\ 0.4,\ -0.4].
+\]
+
+Now zoom into one token in the first response. The old rollout policy assigned probability $0.08$ to the token \texttt{because}; the updated policy currently assigns $0.10$. The PPO ratio is $\rho_t = 0.10 / 0.08 = 1.25$. With $\epsilon = 0.2$, the clipped ratio is $1.2$. Since the advantage is positive, PPO uses the clipped value: this token should become more likely, but it does not receive unlimited credit for jumping from $0.08$ to $0.10$.
+
+For a token in the fourth response with negative advantage, the sign reverses: PPO decreases probability, but clipping prevents an extreme one-batch collapse. One PPO step is therefore not ``make good responses likely and bad responses impossible.'' It is a controlled nudge: raise probability on actions that led to above-baseline returns, lower probability on actions that led to below-baseline returns, and keep every nudge bounded.
+\end{tcolorbox}
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
+\textbf{Pause and verify.}\quad Suppose you are running PPO on your 3B Project~3 model with terminal reward assignment. A response has 200 tokens. Token 200 receives $r_\phi(x,y) = 0.8$ from the reward model and a KL penalty of $-0.05$. Token 100 receives only a KL penalty of $-0.03$. Token 1 receives only a KL penalty of $-0.01$.
+
+(a) What is $r_{200}$? (b) What is $r_{100}$? (c) Without GAE, how does the reward model's signal reach token 1?
+
+\textit{Answers:} (a) $r_{200} = 0.8 - 0.05 = 0.75$. (b) $r_{100} = -0.03$ (only KL penalty). (c) Through the value function: $V_\psi(s_1)$ estimates the expected return from token 1 onward, which includes the terminal reward. GAE uses $V_\psi$ to propagate the signal backward via TD residuals $\delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)$.
+}}
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Each PPO iteration generates responses, scores them, estimates advantages, and updates the policy.
+  \item A useful PPO dashboard tracks reward, KL, held-out win rate, response length, entropy, and value-model fit together.
+  \item The reward model produces a single scalar per response. Standard practice assigns it to the last token and applies KL penalties per-token.
+  \item RLHF PPO requires four models in memory. PEFT (Chapter~\ref{ch:peft}) makes this feasible on limited hardware.
+\end{itemize}
+\textit{Next: why is the KL constraint so important, and what happens without it?}
+\end{quickrecap}
+
+
+%----------------------------------------------------------------------
 \section{KL Constraint Deep Dive}
 \label{sec:kl-deep-dive}
 
-% Why KL to pi_ref is essential (building on Ch.14 §14.7).
-% Empirical pathologies without KL constraint.
-% InstructGPT ablations.
-% KL coefficient scheduling.
+Chapter~\ref{ch:rl-foundations} (\S\ref{sec:kl-rl}) introduced the KL constraint as essential for LLM RL. Chapter~\ref{ch:preference-learning} (\S\ref{sec:kl-objective}) used it as the starting point for the DPO derivation. This section develops the RLHF-specific view: why the constraint is load-bearing in the PPO loop, what happens empirically when you remove it, and how to tune it.
 
+\subsection{Three Roles of the KL Penalty}
+
+The KL term $\beta \, D_{\text{KL}}[\pi_\theta \| \pi_{\text{ref}}]$ serves three distinct purposes in RLHF:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Reward model regularization.} The reward model is accurate near the SFT distribution but unreliable far from it. The KL penalty keeps the policy in the region where the reward model's scores are meaningful. Without it, the policy finds high-reward but low-quality outputs in the reward model's blind spots.
+  \item \textbf{Capability preservation.} Aggressive RL optimization can degrade capabilities the model learned during pretraining---fluency, factual knowledge, coherence over long contexts. The KL penalty prevents the policy from drifting so far from the pretrained distribution that these capabilities are lost.
+  \item \textbf{Output diversity.} Without the KL constraint, PPO tends to collapse the policy's output distribution to a few high-reward templates. The KL penalty maintains entropy, keeping the model's responses diverse.
+\end{enumerate}
+
+\begin{tcolorbox}[colback=gray!8, colframe=gray!40]
+\textbf{Echo: the KL constraint across Part III.}
+You have now seen the KL constraint in three roles:
+\begin{itemize}[nosep]
+  \item Chapter~\ref{ch:preference-learning} (\S\ref{sec:kl-objective}): the optimization-theoretic origin. The KL term defines the feasible region for the preference-optimal policy, and its closed-form solution gives DPO.
+  \item Chapter~\ref{ch:rl-foundations} (\S\ref{sec:kl-rl}): the RL-theoretic motivation. Without KL, LLM RL exploits the reward function and degrades general capability.
+  \item This chapter: the engineering reality. The KL penalty is the primary defense against reward hacking, capability loss, and mode collapse in the PPO loop.
+\end{itemize}
+Same mathematical object, three perspectives. The KL constraint is the load-bearing structure of post-training alignment.
+\end{tcolorbox}
+
+\subsection{What Happens Without KL}
+
+InstructGPT's ablations show a consistent empirical pattern when $\beta$ is removed: reward model scores rise rapidly, but human preference ratings stall or decrease. The gap between RM score and human win rate---which \S\ref{sec:reward-hacking} will call reward hacking---becomes the dominant signal. Two specific effects deserve mention here because they relate directly to the KL's protective role rather than to the reward model's failure:
+
+\begin{itemize}[nosep]
+  \item \textbf{Response diversity collapses.} Without the entropy-preserving effect of the KL penalty, the policy converges to a small set of templates that the reward model consistently scores highly. In the driving analogy: you learn one maneuver the instructor loves and repeat it everywhere.
+  \item \textbf{General capabilities degrade.} Performance on standard NLP benchmarks (e.g., HellaSwag, MMLU) drops as the model over-specializes for the reward signal. This is the capability-preservation role of KL in action: the policy ``forgets'' behaviors it inherited from pretraining that the reward model does not explicitly reward.
+\end{itemize}
+
+\noindent The concrete examples of reward exploitation (length, formatting, sycophancy, hedging) and the over-optimization scaling law belong to \S\ref{sec:reward-hacking}, where we develop them fully.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch15/fig_kl_ablation.png}
+\caption{\textbf{The KL constraint in action.} Without KL ($\beta = 0$): reward model score increases monotonically, but human win rate peaks and then decreases---classic over-optimization. With appropriate KL: reward model score increases more slowly, but human win rate tracks it. The gap between RM score and human win rate is the measure of reward hacking. Adapted from Gao et al.~\cite{gao2023scaling}.}
+\label{fig:kl-ablation}
+\end{figure}
+
+\subsection{Tuning the KL Coefficient}
+
+The KL coefficient $\beta$ controls how aggressively the policy can deviate from the reference:
+
+\begin{itemize}[nosep]
+  \item \textbf{Too high}: the policy barely moves from the SFT checkpoint. Training is stable but the model does not improve much. You are paying the cost of RL training for minimal benefit.
+  \item \textbf{Too low}: the policy exploits the reward model. Reward scores increase but quality degrades.
+  \item \textbf{Adaptive scheduling}: InstructGPT used a fixed $\beta = 0.02$, but adaptive approaches can be more robust. A common scheme: set a target KL (e.g., 6 nats), and when the measured KL exceeds $1.5\times$ the target, double $\beta$; when it falls below $0.5\times$ the target, halve $\beta$. This lets the coefficient self-adjust to the training dynamics rather than requiring manual tuning.
+\end{itemize}
+
+\begin{tcolorbox}[colback=orange!5, colframe=orange!60, title=\textbf{For Project~3: KL Coefficient}]
+\begin{itemize}[nosep]
+  \item Start with $\beta = 0.04$--$0.1$ for a 3B model. Larger models can use smaller $\beta$ because their SFT checkpoint is already closer to the desired behavior.
+  \item Monitor $D_{\text{KL}}[\pi_\theta \| \pi_{\text{ref}}]$ throughout training. If it exceeds 10--15 nats, the policy has drifted far enough that reward model scores may be unreliable.
+  \item A simple diagnostic: generate 100 responses from both $\pi_\theta$ and $\pi_{\text{ref}}$ to the same prompts. If you can tell them apart at a glance, KL is too large.
+\end{itemize}
+\end{tcolorbox}
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item The KL penalty serves three roles: reward model regularization, capability preservation, and output diversity.
+  \item Without KL, reward scores increase but human preference ratings degrade---the hallmark of reward hacking.
+  \item $\beta$ must balance between under-training (too high) and over-optimization (too low).
+\end{itemize}
+\textit{Next: reward hacking in detail---concrete examples and mitigations.}
+\end{quickrecap}
+
+
+%----------------------------------------------------------------------
 \section{Reward Hacking and Mitigations}
 \label{sec:reward-hacking}
 
-% Over-optimization phenomenon (Gao et al. 2022 scaling law).
-% Concrete examples: length exploitation, formatting tricks.
-% Reward model ensembling.
-% KL adaptive scheduling.
+Reward hacking is the central failure mode of RLHF. It occurs when the policy finds behaviors that score highly on the reward model but do not correspond to genuinely good responses. The reward model is a learned proxy, and any proxy can be gamed. In the driving analogy: the instructor gives higher scores for smooth lane changes, so you learn to drive exclusively in the slowest lane---technically smooth, but not actually good driving.
 
+\subsection{Concrete Examples}
+
+\begin{itemize}[nosep]
+  \item \textbf{Length exploitation.} Reward models often assign higher scores to longer responses, even controlling for quality. The policy learns to generate verbose outputs that contain padding, repetition, or unnecessary qualifications. This was one of the earliest observed pathologies in RLHF systems.
+  \item \textbf{Formatting tricks.} Bullet points, numbered lists, headers, and bold text tend to receive higher reward model scores. The policy learns to format every response as a structured document, even when a brief sentence would be more appropriate.
+  \item \textbf{Sycophancy.} The policy learns that agreeing with the user, validating their assumptions, and avoiding disagreement scores well. This produces a model that tells users what they want to hear rather than what is accurate.
+  \item \textbf{Hedging.} Excessive caveats, qualifications, and ``it depends'' framing score well because they are rarely wrong. The policy learns to be cautiously uninformative.
+\end{itemize}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch15/fig_reward_hacking.png}
+\caption{\textbf{Reward hacking: optimizing the proxy, not the goal.} Left: early in PPO training, reward model score and human win rate increase together. Right: after over-optimization, reward model score continues to rise but human win rate plateaus or decreases. The policy has found behaviors that exploit the reward model's biases without improving genuine quality.}
+\label{fig:rlhf-reward-hacking}
+\end{figure}
+
+\subsection{The Over-Optimization Scaling Law}
+
+Gao et al.~\cite{gao2023scaling} quantified reward hacking empirically. They found a consistent pattern across model sizes: as PPO optimization progresses, the true reward (measured by a separate gold-standard reward model or human evaluation) initially increases with the proxy reward but eventually \emph{decreases} even as the proxy reward continues to rise. The gap between proxy reward and true reward grows with the square root of the KL divergence from the reference policy.
+
+This result has a practical implication: \textbf{more optimization is not always better}. There is an optimal amount of RL training, beyond which the policy has over-fitted to the reward model's biases. Finding this optimum is an engineering challenge that depends on reward model quality, KL coefficient, and the diversity of the prompt distribution.
+
+\subsection{Mitigations}
+
+\begin{enumerate}[nosep]
+  \item \textbf{KL constraint} (\S\ref{sec:kl-deep-dive}). The primary defense. Limits how far the policy can deviate from the reference.
+  \item \textbf{Reward model ensembling.} Train multiple reward models on different data subsets. Use the minimum or mean score across the ensemble. Exploiting one model's bias is harder when other models disagree. This adds cost but measurably reduces hacking.
+  \item \textbf{Prompt diversity.} A narrow prompt distribution lets the policy specialize its hacking strategies. A diverse prompt set forces general-purpose quality improvements rather than narrow exploits.
+  \item \textbf{Length penalties.} Explicitly penalize response length in the reward signal, or train the reward model with length-controlled pairs. Directly addresses the most common reward hacking vector.
+  \item \textbf{Periodic reward model retraining.} Retrain the reward model on responses from the current policy, not just the SFT model. This closes the distribution gap between the reward model's training data and the policy's current behavior. Llama~2 used this approach~\cite{touvron2023llama2}.
+  \item \textbf{Human evaluation checkpoints.} Periodically evaluate the policy with human raters, not just the reward model. If human ratings plateau while reward scores keep rising, stop training.
+\end{enumerate}
+
+\begin{tcolorbox}[colback=blue!5, colframe=blue!40, title=\textbf{Is Reward Hacking a Bug or a Feature?}]
+Reward hacking is often framed as a failure of the training procedure. But it can also be seen as a \emph{success} of the optimizer and a failure of the \emph{specification}: the policy is doing exactly what you asked it to do---maximizing the reward signal---and the problem is that your reward signal does not perfectly capture what you want.
+
+This reframing matters because it shifts the engineering effort from ``fix the optimizer'' to ``improve the specification.'' Better reward models, better data, and more careful objective design are ultimately more effective than RL-side patches. The KL constraint buys time---it limits how far the policy can exploit the specification error---but it does not fix the underlying problem.
+
+This perspective carries directly into Chapter~\ref{ch:reasoning-rl}: when the reward is a verifiable answer (math correctness, code tests), the learned-proxy problem becomes much smaller. The reward no longer depends on a preference model's extrapolation. But specification has not vanished: the verifier may check only the final answer, may miss reasoning quality, or may reward brittle test passing. This is why reasoning RL can often optimize more aggressively than classical RLHF, but still needs careful reward design.
+\end{tcolorbox}
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
+\textbf{Pause and verify.}\quad You are training your 3B model with RLHF. After 500 PPO steps, you observe: (a)~reward model score has increased from 0.5 to 2.1, (b)~average response length has increased from 150 to 380 tokens, (c)~KL divergence from the reference is 18 nats, (d)~human evaluation on 50 samples shows the model is now more helpful but also more verbose and occasionally sycophantic.
+
+Which mitigation(s) would you try first? Why?
+
+\textit{Answer:} The high KL (18 nats) and length increase suggest the model is exploiting the reward model's length bias. Two immediate actions: (1)~increase $\beta$ or use adaptive KL to pull the policy back, (2)~add a length penalty to the reward signal. The sycophancy signal suggests the reward model itself has a bias toward agreeable responses---harder to fix without retraining the RM or adding diversity to the prompt set.
+}}
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Reward hacking occurs when the policy exploits the reward model's biases (length, formatting, sycophancy, hedging).
+  \item Gao et al.\ showed that true reward eventually decreases even as proxy reward increases---more optimization is not always better.
+  \item Mitigations include KL constraint, RM ensembling, prompt diversity, length penalties, periodic RM retraining, and human evaluation checkpoints.
+\end{itemize}
+\textit{Next: RLHF variants---how other teams adapted the pipeline.}
+\end{quickrecap}
+
+
+%----------------------------------------------------------------------
 \section{RLHF Variants}
 \label{sec:rlhf-variants}
 
-% Constitutional AI (Anthropic): RLAIF with principles.
-% Llama-2 RLHF recipe.
-% Other production recipes.
+The InstructGPT pipeline is a template, not a fixed recipe. Subsequent systems kept the three-stage structure but modified individual components. Three variants are worth understanding.
 
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch15/fig_rlhf_variants.png}
+\caption{\textbf{Three RLHF variants.} Each variant modifies a different component of the InstructGPT pipeline. Constitutional AI replaces human preference annotation with AI self-critique. Llama~2 adds rejection sampling between SFT and PPO and iteratively retrains the reward model. Anthropic's later work explores RLAIF with multiple principles and constitutional revision.}
+\label{fig:rlhf-variants}
+\end{figure}
+
+\subsection{Constitutional AI}
+
+Anthropic's Constitutional AI~\cite{bai2022constitutional} addresses a bottleneck in RLHF: collecting human preference data for safety-related behaviors is expensive, slow, and emotionally taxing for annotators. CAI replaces human annotation with \emph{AI self-critique}:
+
+\begin{enumerate}[nosep]
+  \item Generate a response to a prompt (which may elicit harmful content).
+  \item Ask the model to critique its own response according to a set of written principles (the ``constitution''): ``Is this response harmful? Does it contain misinformation?''
+  \item Ask the model to revise its response based on the critique.
+  \item Use the (original, revised) pair as preference data, with the revised response as the preferred one.
+  \item Train a reward model on this AI-generated preference data (RLAIF).
+  \item Run PPO with the AI-trained reward model.
+\end{enumerate}
+
+The key insight: the principles are human-written but the annotation is automated. This scales preference data collection while maintaining human control over the values being optimized. The trade-off is that the AI judge inherits the base model's biases and may not catch failures that require genuine human judgment.
+
+\subsection{Llama 2 Recipe}
+
+Llama~2-Chat~\cite{touvron2023llama2} introduced two modifications that are now widely adopted:
+
+\begin{itemize}[nosep]
+  \item \textbf{Rejection sampling before PPO.} After SFT, generate $K$ responses per prompt and keep only the highest-scoring one (according to the reward model). Fine-tune on these best-of-$K$ responses before starting PPO. This gives the policy a better starting point.
+  \item \textbf{Iterative reward model training.} After each round of PPO, collect new human comparisons on the current policy's outputs and retrain the reward model. This keeps the reward model calibrated on the policy's current distribution, reducing reward hacking from distribution shift.
+\end{itemize}
+
+The Llama~2 team also found that multiple rounds of RLHF (5 iterations) produced better results than a single round, with the biggest gains in safety metrics.
+
+\subsection{RLAIF at Scale}
+
+The distinction between RLHF and RLAIF (RL from AI Feedback) has blurred. Most production pipelines now use a mix: human annotation for high-stakes categories (safety, factual accuracy), AI annotation for volume (helpfulness, style, format). The operational question is not ``human or AI?'' but ``which categories need human judgment, and which can be automated?''
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Constitutional AI replaces human preference annotation with AI self-critique guided by written principles.
+  \item Llama~2 adds rejection sampling before PPO and iteratively retrains the reward model on the current policy's outputs.
+  \item Most production systems now blend human and AI feedback, using humans for high-stakes categories.
+\end{itemize}
+\textit{Next: if DPO covers most use cases, why did we learn all of this?}
+\end{quickrecap}
+
+
+%----------------------------------------------------------------------
 \section{Industry Retreat from Full RLHF}
 \label{sec:rlhf-retreat}
 
-% 2024+ open-source preferring SFT + DPO (callback to Ch.13 §13.13).
-% Frontier labs still using RLHF for nuanced alignment.
-% Honest framing: RLHF is operationally expensive, DPO covers 80% of use cases.
+Section~\ref{sec:preference-industry} of Chapter~\ref{ch:preference-learning} documented the 2024--2025 convergence: the open-source community has largely adopted SFT + DPO as the default post-training recipe, with full RLHF reserved for frontier alignment work. In the driving analogy: most people learn to drive well enough from studying the manual (SFT) and watching dashcam comparisons of good and bad driving (DPO). The full driving-instructor loop (RLHF) produces better drivers, but it requires the instructor to be present in every session. This section examines \emph{why} the retreat happened and where RLHF remains essential.
 
+\subsection{Why DPO Won the Default}
+
+The argument is operational, not mathematical:
+
+\begin{itemize}[nosep]
+  \item \textbf{Fewer moving parts.} DPO requires two models (policy + frozen reference). PPO requires four (policy + reference + reward model + value model). Fewer models means fewer bugs, less memory, and faster iteration.
+  \item \textbf{Training stability.} PPO training is sensitive to hyperparameters ($\beta$, learning rate, rollout batch size, GAE $\lambda$, number of PPO epochs per batch). DPO has fewer knobs. A poorly tuned PPO run can catastrophically degrade the model; a poorly tuned DPO run usually just under-trains.
+  \item \textbf{No explicit reward model in the training loop.} DPO optimizes preferences directly, bypassing a separately trained reward model. This removes the most direct RLHF-style reward hacking loop. DPO has its own failure modes (Chapter~\ref{ch:preference-learning}, \S\ref{sec:dpo-failures})---likelihood displacement, reference sensitivity, and noise sensitivity---but they are usually easier to diagnose than PPO over-optimization against a learned RM.
+  \item \textbf{PEFT compatibility.} DPO + LoRA is clean: the reference is the base model, the policy is the base + adapter, and they share weights. PPO + LoRA is possible but operationally heavier because of the value model and rollout generation.
+\end{itemize}
+
+\subsection{Where RLHF Is Still Used}
+
+\begin{itemize}[nosep]
+  \item \textbf{Multi-dimensional reward.} When the objective involves balancing multiple criteria (helpfulness vs.\ safety vs.\ conciseness), a reward model provides a natural way to combine them. DPO works with pairwise comparisons, which flatten multi-dimensional quality into a single ranking.
+  \item \textbf{Dense reward signals.} Reward models can score intermediate steps or provide fine-grained feedback that DPO's sequence-level comparison cannot capture.
+  \item \textbf{Frontier safety alignment.} Large labs continue to invest in RLHF for safety-critical behaviors where the additional control of RM + PPO matters---particularly for behaviors that are hard to elicit through pairwise comparison (e.g., calibration, appropriate uncertainty expression).
+  \item \textbf{Reasoning RL.} Chapter~\ref{ch:reasoning-rl} uses RL with verifiable rewards---math correctness, code test pass rates---rather than learned preference reward models. This is not classical RLHF, but it reuses much of the policy-optimization machinery developed in this chapter, while replacing the reward source.
+\end{itemize}
+
+\medskip
+\noindent\textit{The retreat is from full RLHF's operational complexity, not from the idea of optimizing against reward signals. A reasonable question follows: if DPO covers most use cases, why did this chapter exist?}
+
+
+%----------------------------------------------------------------------
 \section{Why We Still Learn RLHF}
 \label{sec:why-learn-rlhf}
 
-% Conceptual foundation for Ch.16 reasoning RL.
-% Required for frontier alignment work.
-% Understanding the full pipeline gives judgment about when DPO is insufficient.
-% Forward reference to Ch.16.
+A reasonable question: if DPO covers most practical use cases, why did this chapter exist? Three reasons.
 
+\subsection{RLHF Is the Conceptual Foundation}
+
+DPO is a simplification of RLHF---literally derived from the RLHF objective (Chapter~\ref{ch:preference-learning}, \S\ref{sec:dpo-derivation}). Understanding the full pipeline gives you the vocabulary to understand \emph{what DPO simplifies} and \emph{what it gives up}. Without RLHF, DPO looks like a magic trick---a supervised loss that somehow optimizes preferences. With RLHF, you understand the mathematical structure underneath.
+
+\subsection{Reasoning RL Uses the Same Machinery}
+
+Chapter~\ref{ch:reasoning-rl} is the practical payoff. Reasoning RL replaces the learned reward model with a verifiable reward (math correctness, code tests) and sometimes replaces PPO with GRPO (a simpler variant). But the core machinery---policy gradient optimization against a reward signal, KL constraint to a reference policy, advantage estimation, clipped updates---is the same machinery you learned in this chapter and Chapter~\ref{ch:rl-foundations}. You cannot understand GRPO without understanding what it simplifies.
+
+\subsection{Frontier Work Requires It}
+
+If your career leads to frontier alignment work, you need to understand full RLHF even when the exact production recipe is proprietary or no longer identical to InstructGPT. The DPO default applies to many open-source workflows, but the teams working on the most capable and most safety-critical models still need the ideas in this chapter: reward models, policy optimization, KL control, over-optimization diagnostics, and human evaluation loops. To close the driving analogy: most drivers need only a license and a dashcam. But if you are designing the instructor, calibrating the scoring rubric, or building self-driving systems, you need to understand the full driving-school infrastructure---even if most students graduate without using all of it.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch15/fig_rlhf_to_reasoning.png}
+\caption{\textbf{From RLHF to reasoning RL.} The machinery taught in this chapter carries directly to Chapter~\ref{ch:reasoning-rl}. What changes is the reward source: from a learned human-preference proxy to a verifiable task signal. This change reduces learned-reward over-optimization but does not remove all specification risk.}
+\label{fig:rlhf-to-reasoning}
+\end{figure}
 
 %----------------------------------------------------------------------
 % End matter
 %----------------------------------------------------------------------
 
-% \subsection*{Summary}
-% \subsection*{Pause-and-Verify Exercises}
-% \subsection*{Key Readings}
-% \subsection*{Key Equations}
+\begin{takeaways}
+\begin{enumerate}
+  \item The InstructGPT pipeline has three stages: SFT (demonstrations), reward model (comparisons), and PPO (RL optimization). Each stage builds on the previous, and errors compound.
+  \item During PPO, the reward model is frozen---it is a proxy for human judgment, not ground truth. The policy generates out-of-distribution responses that the RM must score by extrapolation.
+  \item The PPO training loop generates responses, scores them with the RM, estimates per-token advantages using GAE, and updates the policy with a clipped objective. Terminal reward assignment places the RM score on the last token. Rollout generation dominates wall-clock time.
+  \item The value model (critic) is a model-sized object trained to predict expected returns. Its cost is a key reason RLHF is operationally heavy, and eliminating it is a key motivation for GRPO (Chapter~\ref{ch:reasoning-rl}).
+  \item The KL constraint serves three roles: reward model regularization, capability preservation, and output diversity. It is the same mathematical object from DPO, RL foundations, and RLHF---three perspectives on one structure.
+  \item Reward hacking is the central failure mode: the policy finds high-reward behaviors that exploit the RM's biases. Mitigations include KL constraint, RM ensembling, prompt diversity, and periodic RM retraining.
+  \item DPO has become a common open-source default because it is simpler and more stable. Full RLHF remains important for multi-dimensional reward, frontier safety, and the policy-optimization ideas behind reasoning RL.
+\end{enumerate}
+\end{takeaways}
+
+
+\section*{Summary}
+
+\paragraph{What this chapter established.} Starting from the three-stage InstructGPT pipeline, we showed how each component connects to what you learned in Chapters~\ref{ch:instruction-tuning}--\ref{ch:rl-foundations}: SFT produces the initial policy, the Bradley-Terry reward model produces the scoring function, and PPO optimizes the policy against that scoring function with a KL constraint to the SFT checkpoint. We developed the concrete implementation details---rollout generation as the wall-clock bottleneck, per-token reward assignment, value model training and initialization, the four-model memory layout and its PEFT solution, hyperparameter ranges from InstructGPT, and the special role of mini-batches in PPO. We then examined what goes wrong: reward hacking, the Gao et al.\ over-optimization scaling law, and the full family of mitigations (KL, ensembling, prompt diversity, iterative RM retraining) constitute the engineering core of RLHF.
+
+\paragraph{The proxy-optimization lesson.} The central lesson of this chapter is that RLHF is optimization against an imperfect proxy. The reward model is not human judgment---it is a learned approximation with systematic biases, limited coverage, and finite capacity. Every piece of RLHF engineering---the KL constraint, the $\beta$ tuning, the ensembling, the human evaluation checkpoints---exists because the proxy \emph{will be exploited} if you optimize against it hard enough. This is not a failure of the technique. It is a fundamental property of optimizing against learned objectives, and it connects to a broader principle in machine learning: Goodhart's Law applied to neural networks.
+
+The proxy-optimization lesson also explains why reasoning RL (Chapter~\ref{ch:reasoning-rl}) is transformative: when the reward is verifiable (``does 2+2=4?''), the learned-reward proxy problem is much smaller. The model is no longer optimizing a preference model's extrapolation. It is optimizing against a verifier. That can support longer and more aggressive training, but it shifts the burden to verifier design: what exactly is being checked, and what remains invisible to the reward?
+
+\paragraph{One sentence.} \emph{RLHF is the engineering of optimizing against a learned proxy---a driving instructor whose scorecard is imperfect, whose extrapolations are exploitable, and whose coverage has blind spots. The art is knowing when to stop before the proxy breaks.}
+
+\paragraph{What comes next.} Chapter~\ref{ch:reasoning-rl} replaces the learned reward model with verifiable rewards: math correctness, code test results, formal proofs. The policy-optimization spine from this chapter still matters, but the reward source changes from subjective preference modeling to objective verification. That shift defines the 2024--2025 frontier of post-training.
+
+
+\section*{Key Equations at a Glance}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Name} & \textbf{Equation} \\
+\midrule
+RLHF reward & $R(x, y) = r_\phi(x, y) - \beta \, D_{\text{KL}}[\pi_\theta(\cdot \mid x) \| \pi_{\text{ref}}(\cdot \mid x)]$ \\[6pt]
+Per-token reward (terminal) & $r_t = \mathbf{1}[t{=}T] \cdot r_\phi(x,y) - \beta \log \frac{\pi_\theta(y_t \mid s_t)}{\pi_{\text{ref}}(y_t \mid s_t)}$ \\[6pt]
+PPO-clip (from Ch.14) & $\mathcal{L}^{\text{PPO}} = \mathbb{E}\left[\min\left(\rho_t \hat{A}_t, \; \text{clip}(\rho_t, 1{-}\epsilon, 1{+}\epsilon) \hat{A}_t\right)\right]$ \\[6pt]
+Value loss (clipped) & $\mathcal{L}^{V} = \max\!\left[(V_\psi - R_t)^2, \;(\text{clip}(V_\psi, V_{\text{old}} \pm \epsilon_V) - R_t)^2\right]$ \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+
+\section*{Key Readings}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Ouyang et al., 2022.} ``Training Language Models to Follow Instructions with Human Feedback'' (InstructGPT)~\cite{ouyang2022instructgpt}. The anchor paper for this chapter. Read for the full three-stage pipeline, concrete training details, and ablation studies showing the importance of each stage.
+  \item \textbf{Christiano et al., 2017.} ``Deep Reinforcement Learning from Human Preferences''~\cite{christiano2017deep}. The original proposal for learning reward models from human comparisons and optimizing policies against them. Read for the conceptual foundation.
+  \item \textbf{Stiennon et al., 2020.} ``Learning to Summarize from Human Feedback''~\cite{stiennon2020summarize}. RLHF applied to text summarization. Cleaner and smaller-scale than InstructGPT; good for understanding the basic setup.
+  \item \textbf{Gao et al., 2023.} ``Scaling Laws for Reward Model Overoptimization''~\cite{gao2023scaling}. The quantitative analysis of reward hacking. Read for the over-optimization scaling law and its implications for training duration.
+  \item \textbf{Bai et al., 2022.} ``Constitutional AI: Harmlessness from AI Feedback''~\cite{bai2022constitutional}. RLAIF with self-critique. Read for the CAI pipeline and the argument that AI annotation can replace human annotation for safety training.
+  \item \textbf{Touvron et al., 2023.} ``Llama 2: Open Foundation and Fine-Tuned Chat Models''~\cite{touvron2023llama2}. The Llama~2-Chat RLHF recipe with rejection sampling and iterative RM training. Read for a production recipe that differs from InstructGPT.
+  \item \textbf{Ziegler et al., 2019.} ``Fine-Tuning Language Models from Human Preferences''~\cite{ziegler2019finetuning}. An early application of PPO to language models for text quality. The simplest RLHF paper to read first.
+\end{enumerate}
+
+\flushbottom

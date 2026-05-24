@@ -1,71 +1,605 @@
 \chapter{Post-Training Frontiers}
 \label{ch:frontiers}
+\raggedbottom
 
-% Core question: What are the open problems in post-training, and where is the
-% field heading?
-%
-% Length estimate: 12-15 pages (tightened from original 15-18 per v4 review)
-% Writing order: 7th / last (synthesis chapter, best written when you know what
-% you actually taught)
-%
-% Design principle: Short reflection chapter, not a deliverable-techniques chapter.
-% Less "current SOTA detail", more "stable problem structure."
-% Frontiers age badly --- every page of speculative content becomes stale in 12 months.
+In 2025, Yue et al.\ asked a deliberately uncomfortable question: when reinforcement learning improves a reasoning model, does it create new reasoning capability, or does it make the model sample better from capabilities it already had? Their test was simple. Compare a base model and an RL-tuned model not only at pass@1, but across large sampling budgets. At small $k$, the RL model often wins. At large $k$, the base model can catch up or exceed it~\cite{yue2025rlreasoning}. The result does not make RL useless. It changes what ``RL improved the model'' means.
 
-\textit{Placeholder --- full content follows the section outline below.}
+This chapter is the landing point for Part~III. Chapters~\ref{ch:instruction-tuning}--\ref{ch:reasoning-rl} taught recipes: SFT, PEFT, DPO, RLHF, PPO, GRPO, RLVR, and verifier-backed reasoning training. Those chapters answered the engineering question: how do we run the method? This chapter asks the epistemic question: what did the method actually change?
 
-\section{Stable Methods vs Research Frontier}
-\label{sec:stable-vs-frontier}
+\paragraph{What this chapter is not.} This is not a catalog of frontier papers. A paper landscape becomes stale faster than a textbook chapter should. It is not another algorithmic recipe. It is not a prediction that one post-training paradigm will win. It is an audit of the methods you just learned: what they surface, what they sharpen, what they may fail to create, and which open problems remain unresolved.
 
-% Frame the distinction: Ch.11-16 taught stable, reproducible techniques.
-% This chapter surveys directions that are promising but not yet settled.
-% Honest disclaimer about shelf life.
+\paragraph{Chapter thesis.} \emph{Current post-training methods often look less like capability creation and more like probability-mass reallocation over capabilities the base model already partially possesses.} That does not make them unimportant. User-facing performance depends on what the model does on the first attempt, not only on what it could do after 1{,}024 samples. But it means the central frontier is not merely ``which optimizer is next?'' The central frontier is understanding when post-training sharpens, composes, or truly discovers behavior.
 
-\section{Self-Improvement and Iterative Training}
+\paragraph{Running example.} Your Project~3 model can now be SFT-tuned, DPO-tuned, and trained with a small verifier. Suppose RL improves pass@1 from 20\% to 55\%. Before you conclude that RL created new reasoning, ask a different question: if the base model sampled 256 attempts, could it already solve most of those problems? If yes, RL may have made successful trajectories much more likely without expanding the set of trajectories the model can produce.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch17/fig_passk_diagnostic.png}
+\caption{\textbf{The pass@$k$ diagnostic.} Low-$k$ accuracy measures user-facing single-attempt performance. High-$k$ accuracy probes the breadth of the model's accessible solution space. If RL improves pass@1 but the base model catches up at large $k$, the evidence points toward sampling efficiency and support narrowing, not an expanded capability boundary.}
+\label{fig:passk-diagnostic}
+\end{figure}
+
+\subsection*{Learning Objectives}
+
+After completing this chapter, you should be able to:
+
+\begin{enumerate}
+  \item Distinguish user-facing capability from distributional capability.
+  \item Explain how pass@$k$ tests probe whether RL expands the model's solution support.
+  \item Interpret spurious-reward results without overclaiming that rewards do not matter.
+  \item Use the sharpening/composition/discovery framework to classify RL effects.
+  \item Explain why self-improvement loops can converge, collapse, or narrow support.
+  \item Connect weak-to-strong supervision and alignment beyond preference to the surfacing question.
+  \item Summarize Part~III as a progression from post-training recipes to an epistemic audit of what those recipes do.
+\end{enumerate}
+
+\subsection*{Notation}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+$p_k$ & pass@$k$: probability that at least one of $k$ samples succeeds \\
+$\text{PGR}$ & Performance gap recovered in weak-to-strong supervision \\
+$R$, $H$, $S$ & Reward (or scalarized components: helpfulness $H$, harmlessness $S$) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection*{Timeline of Key Contributions}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Year} & \textbf{Milestone} \\
+\midrule
+2022 & InstructGPT makes RLHF a central alignment recipe: demonstrations, preference model, PPO~\cite{ouyang2022instructgpt}. \\
+2022 & STaR shows generate-filter-train can bootstrap reasoning traces~\cite{zelikman2022star}. \\
+2022 & Constitutional AI introduces principle-guided self-critique and RLAIF-style safety training~\cite{bai2022constitutional}. \\
+2023 & DPO shows preference optimization can bypass explicit RL machinery~\cite{rafailov2023dpo}. \\
+2023 & Weak-to-strong generalization studies whether weak labels can elicit strong capabilities~\cite{burns2023weak}. \\
+2023 & ReST frames reinforced self-training as an iterative generate-filter-train loop~\cite{gulcehre2023rest}. \\
+2024 & SPIN studies self-play fine-tuning without new human preference labels~\cite{chen2024spin}. \\
+2024 & Self-rewarding language models use the model itself as an LLM-as-judge reward source~\cite{yuan2024selfrewarding}. \\
+2024 & DeepSeekMath introduces GRPO for verifier-backed mathematical reasoning~\cite{shao2024deepseekmath}. \\
+2024--2025 & o1 and DeepSeek-R1 popularize RLVR as a capability-oriented post-training paradigm~\cite{openai2024reasoning,deepseekai2025r1}. \\
+2025 & Pass@$k$ diagnostics challenge the naive story that RLVR straightforwardly creates new reasoning capacity~\cite{yue2025rlreasoning}. \\
+2025 & Spurious-reward studies show that some RLVR gains survive random, incorrect, or weakly informative rewards~\cite{liu2025spurious}. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+
+%----------------------------------------------------------------------
+\section{What This Chapter Is Not}
+\label{sec:ch17-framing}
+
+The previous chapter ended with a clean story: verifiable rewards make reasoning RL scalable. That story is true as engineering. It is incomplete as science. A verifier can tell the model which sampled trajectories passed. It does not tell us whether the model learned a new reasoning algorithm, composed existing subskills more reliably, or merely shifted probability mass toward trajectories already present in the base distribution.
+
+This chapter asks three questions that the post-training arc has repeatedly touched but not yet centered:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Capability vs surfacing}: do post-training methods create new capability, or make latent behavior easier to sample?
+  \item \textbf{Supervisor reliability}: what happens when the feedback source is weak, learned, model-generated, or self-reinforcing?
+  \item \textbf{Alignment target}: what is optimized when the objective is preference, verifiable reward, safety, honesty, or calibration?
+\end{enumerate}
+
+The first question is the core of the chapter. The second and third questions are extensions: if post-training mostly sharpens and surfaces, then self-improvement and weak supervision become questions about what is being surfaced, who is selecting it, and whether the loop narrows support over time.
+
+\begin{tcolorbox}[colback=blue!5, colframe=blue!40, title=\textbf{Epistemic Audit, Not Frontier Inventory}]
+A frontier inventory asks: what new papers should students know? An epistemic audit asks: what uncertainty remains after students know the methods? The second is more durable. SPIN, weak-to-strong, self-rewarding models, DAPO, GSPO, and future variants may move quickly. The underlying question will not: when a training signal improves a model, did it create a capability, elicit a latent capability, or make a narrow behavior easier to sample?
+\end{tcolorbox}
+
+\paragraph{The audit surface.} For the rest of the chapter, every frontier method will be reduced to four questions:
+
+\begin{enumerate}[nosep]
+  \item \textbf{What is the feedback source?} Human preference, verifier, AI judge, weak supervisor, self-play discriminator, or written principle?
+  \item \textbf{What can that feedback source actually see?} Final answer, process trace, style, safety boundary, calibration, or only a proxy?
+  \item \textbf{What does optimization pressure exploit?} Correctness, formatting, length, confidence, judge blind spots, or support narrowing?
+  \item \textbf{What independent diagnostic distinguishes real progress from metric movement?} pass@$k$, held-out judges, adversarial tests, diversity audits, or calibration curves?
+\end{enumerate}
+
+This is the chapter's practical contract. A frontier paper is not understood when you can name its algorithm. It is understood when you can identify its feedback source, its blind spots, and the diagnostic that would falsify its claimed improvement.
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Ch17 is not another post-training recipe or a survey of every frontier method.
+  \item Its main task is to audit what the recipes from Ch11--Ch16 actually change.
+  \item The core tension is capability creation versus probability-mass reallocation.
+\end{itemize}
+\textit{Next: the pass@$k$ diagnostic makes that tension measurable.}
+\end{quickrecap}
+
+
+%----------------------------------------------------------------------
+\section{Does RL Create New Reasoning Capability?}
+\label{sec:rl-create-capability}
+
+This is the chapter's anchor section. Chapter~\ref{ch:reasoning-rl} taught how to run RLVR and GRPO. Here we ask what those updates do to the model's distribution.
+
+\subsection[The Pass@k Test]{The Pass@$k$ Test}
+
+Accuracy at pass@1 measures the probability that one sampled answer succeeds. That is the metric users feel. But it is not the same as the set of solutions the model can produce. A base model may have low pass@1 but high pass@256: it often fails on the first try, yet some of its sampled trajectories are correct. An RL-tuned model may have high pass@1 but lower pass@256: it concentrates probability mass on common successful patterns while narrowing the diversity of its solution support.
+
+Yue et al.\ used this distinction as a diagnostic. The key empirical pattern is not merely ``RL improves reasoning.'' It is more specific: RL-tuned models often outperform base models at small $k$, while base models can catch up or surpass them at large $k$~\cite{yue2025rlreasoning}. The interpretation is that RLVR improves sampling efficiency and single-attempt reliability, but may not expand the outer boundary of reasoning trajectories available to the base model.
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
+\textbf{Pause and verify.}\quad Suppose the base model has pass@1 $=0.10$ and pass@256 $=0.85$. The RL-tuned model has pass@1 $=0.55$ and pass@256 $=0.80$. Which model is more capable? If capability means expected single-attempt success, the RL model wins. If capability means breadth of accessible solution paths, the base model may be stronger. This is the central tension of the chapter.
+}}
+
+\paragraph{Why this matters.} A product team should care about pass@1. A scientist asking what the training method changed should also care about pass@$k$. Both are real metrics; they answer different questions.
+
+\subsection{Spurious Reward Results}
+
+Spurious-reward studies make the puzzle sharper. Liu et al.\ report that RLVR-style training can improve math benchmarks even when the reward is random, format-based, incorrect, or weakly correlated with correctness, with some spurious signals approaching much of the gain from ground-truth rewards on specific Qwen math settings~\cite{liu2025spurious}. This does not prove that reward content never matters. It proves that some measured RLVR gains can come from the training loop and model family rather than from semantic correctness information in the reward.
+
+Three explanations are plausible and not mutually exclusive:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Implicit curriculum}: the rollout/filter/update process changes which prompts and trajectories dominate training.
+  \item \textbf{Token distribution shift}: RL changes confidence, length, formatting, and sampling entropy in ways that improve benchmark scoring.
+  \item \textbf{Format learning}: models learn to produce answer wrappers and reasoning styles that the benchmark pipeline rewards, even when the reward content is weak.
+\end{enumerate}
+
+This connects back to Chapter~\ref{ch:reasoning-rl}'s auxiliary rewards. Format and length signals are useful as guardrails. But spurious-reward results warn that the guardrails can become a large part of the measured gain.
+
+\subsection{Three Regimes of RL Effect}
+
+We need a vocabulary more precise than ``RL works'' or ``RL does not work.'' A useful taxonomy has three regimes.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch17/fig_rl_effect_regimes.png}
+\caption{\textbf{Three regimes of RL effect.} In sharpening, RL reallocates probability mass toward already-sampled good trajectories. In composition, RL makes existing subskills cooperate reliably in one trajectory. In discovery, RL finds genuinely new strategies outside the base model's accessible support. Current LLM RLVR has strong evidence for sharpening, some evidence for composition, and weak evidence for discovery.}
+\label{fig:rl-effect-regimes}
+\end{figure}
+
+\begin{description}[leftmargin=1.5em]
+  \item[Regime 1: Sharpening.] The base model can already produce successful trajectories, but with low probability. RL increases their probability and decreases failed trajectories. This is distribution sharpening.
+  \item[Regime 2: Composition.] The base model has subskills---checking, algebra, decomposition, summarization, code testing---but rarely chains them reliably. RL makes these subskills cooperate in a single trajectory.
+  \item[Regime 3: Discovery.] RL finds a strategy outside the base model's accessible support. The policy learns a genuinely new procedure, not just a new weighting of existing ones.
+\end{description}
+
+The conservative reading of current evidence is that LLM RLVR mostly lives in Regime~1, sometimes reaches Regime~2, and has weak evidence for Regime~3. This reframes the R1-Zero ``aha moment'' from Chapter~\ref{ch:reasoning-rl}: was it discovery of a new reasoning algorithm, or the surfacing and composition of latent checking behaviors that pretraining already made possible? The current evidence leans toward surfacing and composition, not pure discovery.
+
+\subsection{Why GRPO-Style RL Is a Weak Discovery Engine}
+
+This is not a claim that RL cannot discover. AlphaZero discovered powerful Go strategies through structured self-play, Monte Carlo tree search, a perfect simulator, and a curriculum generated by the game itself~\cite{silver2018alphazero}. The exploration was not random token sampling. It was search over a structured environment with a reliable outcome.
+
+GRPO-style LLM RL is different. It samples from the current policy, scores complete trajectories, and reinforces the winners. That is a much weaker discovery engine. In a huge token space, random sampling is unlikely to stumble into a genuinely novel reasoning procedure if the base policy assigns it negligible probability. The limitation is not RL in principle. It is the exploration mechanism used by current LLM RLVR.
+
+\paragraph{The precise claim.} Current GRPO-style RL can be excellent at making a model use what it already knows. It is less obviously a mechanism for inventing what the model cannot already represent or sample.
+
+\subsection{Distillation as a Contrast}
+
+Distillation gives the opposite pattern. A strong teacher can generate reasoning traces that the student model would rarely or never sample. Fine-tuning on those traces can inject a pattern into the student's distribution without requiring the student to discover it through exploration. This is why Chapter~\ref{ch:reasoning-rl} treated STaR, ReST, and R1 distillation as part of the reasoning-data loop rather than as minor footnotes.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch17/fig_distillation_vs_rl.png}
+\caption{\textbf{RL versus distillation as capability transfer mechanisms.} RL samples from the current policy and reinforces trajectories that score well, making it strong at sharpening and composition. Distillation can move teacher-generated trajectories into the student's distribution, making it a more direct way to inject reasoning patterns the student rarely samples on its own.}
+\label{fig:distillation-vs-rl}
+\end{figure}
+
+This gives a practical rule: \emph{strong base model plus RL usually beats weak base model plus lots of RL.} A verifier can select among attempts; it cannot substitute for the latent competence required to generate plausible attempts. Distillation can sometimes import that competence from a teacher.
+
+\begin{tcolorbox}[colback=blue!5, colframe=blue!40, title=\textbf{What This Does Not Mean}]
+The evidence above should not be read as ``RL is useless.''
+
+\begin{itemize}[nosep]
+  \item Sharpening is valuable. Users experience pass@1, not pass@1024.
+  \item RLHF and RLVR remain powerful production tools when their feedback sources are instrumented well.
+  \item AlphaZero-style discovery remains possible in structured environments with search and reliable simulators.
+  \item The field's understanding is unsettled. The right claim is not that RL cannot create capability, but that current LLM RLVR evidence strongly challenges the naive capability-creation story.
+\end{itemize}
+\end{tcolorbox}
+
+\begin{tcolorbox}[colback=gray!8, colframe=gray!40, title=\textbf{Echo: Surfacing vs Creating}]
+Chapter~\ref{ch:instruction-tuning} argued that SFT can teach format and instruction-following behavior without proving that it created new knowledge. Chapter~\ref{ch:peft} showed that many adaptations move in low-dimensional subspaces. Chapter~\ref{ch:reasoning-rl} cautioned that RL may surface latent reasoning behavior rather than create reasoning from nothing. This section upgrades that caution into a testable empirical claim: compare low-$k$ and high-$k$ performance, examine spurious rewards, and ask whether the method sharpened, composed, or discovered. This closes the cross-chapter thread that has run through Block~A: what fine-tuning, PEFT, and RL each touch---and what they do not touch. The thread began as cautious framing in Chapter~\ref{ch:instruction-tuning}, became a mathematical observation in Chapter~\ref{ch:peft}, grew into an empirical caution in Chapter~\ref{ch:reasoning-rl}, and here becomes a testable claim with quantitative diagnostics.
+\end{tcolorbox}
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item pass@1 and high-$k$ pass rates measure different notions of capability.
+  \item Spurious-reward results imply that some RLVR gains come from training-loop effects, not reward semantics alone.
+  \item The three regimes are sharpening, composition, and discovery.
+  \item Current LLM RLVR has strongest evidence for sharpening and composition, not discovery.
+\end{itemize}
+\textit{Next: if RL mostly sharpens, what happens when the sharpening loop repeats itself?}
+\end{quickrecap}
+
+
+%----------------------------------------------------------------------
+\section{Self-Improvement Loops}
 \label{sec:self-improvement}
 
-% Self-rewarding language models.
-% Iterative self-distillation.
-% The recursive improvement question.
-%
-% FOLDED IN (brief treatment, not full sections):
-%   - SPIN and self-play alignment
-%   - Weak-to-strong generalization (Burns et al. 2023)
-% These were §17.3 and §17.4 in the original outline; consolidated here to
-% keep the chapter tight.
+Self-improvement loops are attractive because they promise to reduce human annotation. The model generates candidates, a judge or verifier selects useful outputs, and the next model trains on the selected data. Chapter~\ref{ch:reasoning-rl} already showed this pattern for reasoning traces. The frontier question is whether repeated loops converge to better capability or narrow the distribution until the model overfits its own judge.
 
+\paragraph{Audit surface for self-improvement.} Feedback source: the model's own outputs, filtered by a judge. What the judge can see: whatever it was trained or prompted to evaluate---often style, correctness format, or preference proxy. Optimization pressure: amplify whatever the judge rewards, including judge-correlated artifacts. Independent diagnostic: held-out evaluators, diversity tracking, and pass@$k$ at each iteration to check whether support is expanding or narrowing.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.2cm}p{3.1cm}p{3.4cm}X@{}}
+\toprule
+\textbf{Feedback source} & \textbf{What it sees} & \textbf{Pressure it creates} & \textbf{Independent diagnostic} \\
+\midrule
+Self-generated candidates plus AI judge, verifier, or discriminator & Style, format, correctness proxy, or judge preference & Repeatedly amplify the judge's current notion of ``better'' & Held-out human/verifier evaluation, diversity over rounds, pass@$k$ support audit \\
+\bottomrule
+\end{tabularx}
+\normalsize
+\end{center}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch17/fig_self_improvement_convergence.png}
+\caption{\textbf{Self-improvement can converge or collapse.} Iterative loops generate, judge, filter, and train. They improve when the judge remains calibrated and the filtered data expands useful behavior. They collapse when repeated filtering narrows support, amplifies judge errors, or creates self-confirming artifacts.}
+\label{fig:self-improvement-convergence}
+\end{figure}
+
+\subsection{The Basic Loop}
+
+STaR, ReST, SPIN, self-rewarding language models, and iterative DPO all share a structure:
+
+\begin{enumerate}[nosep]
+  \item Sample fresh outputs from the current model.
+  \item Score, compare, or filter those outputs.
+  \item Train the next model on the selected data.
+  \item Repeat.
+\end{enumerate}
+
+The difference is the feedback source. STaR and ReST use external correctness or reward filters~\cite{zelikman2022star,gulcehre2023rest}. SPIN uses a self-play discrimination objective~\cite{chen2024spin}. Self-rewarding language models use AI judges that the model helps produce~\cite{yuan2024selfrewarding}. Iterative DPO refreshes preference pairs from newer policy samples.
+
+\paragraph{The information-theoretic distinction.} Self-improvement is not one mechanism. It is a family of loops with fundamentally different information structure, and the structure determines what the loop can learn:
+
+\begin{itemize}[nosep]
+  \item \textbf{STaR / ReST}: the loop imports fresh information from an \emph{external} task signal (verifier, ground truth, environment). Each iteration can in principle bring in signal the model has never seen. This is why STaR-style loops are closest to supervised learning with data augmentation.
+  \item \textbf{SPIN}: the discriminator compares current vs.\ previous policy outputs. The loop learns to separate \emph{newer} from \emph{older} samples, not necessarily \emph{better} from \emph{worse}. If the model drifts stylistically, the discriminator rewards the drift rather than correctness.
+  \item \textbf{Self-rewarding LMs}: generator and judge are the same model. The loop is cheap but epistemically coupled---the judge's biases directly become the generator's training signal.
+  \item \textbf{Iterative DPO}: preference pairs are refreshed from on-policy samples, but the ranking may come from an external judge or from the model itself. The information depends on which.
+\end{itemize}
+
+This taxonomy is more stable than the names. Future self-improvement methods will still fall into one of these categories: external-signal loop, self-play discrimination, self-judgment, or refreshed preference pairs. The category determines the ceiling.
+
+\paragraph{Concrete evidence.} Yuan et al.\ report that their Llama~2 70B self-rewarding model's AlpacaEval~2.0 win rate improves from 9.94\% at iteration~1 to 20.44\% at iteration~3, with a fourth iteration reaching 22.97\%; they also note diminishing gains and increasing response length over iterations~\cite{yuan2024selfrewarding}. Chen et al.\ report that SPIN starting from Zephyr-7B-SFT-full shows broad gains on MT-Bench and Open LLM Leaderboard benchmarks without additional human preference labels, but gains plateau after 2--3 iterations~\cite{chen2024spin}. That is exactly the mixed signature this chapter should teach: iteration can improve first-sample helpfulness, but the gain curve flattens, response length grows, and the improvement may partly be style, length, and judge preference becoming sharper rather than reasoning depth expanding.
+
+\subsection{Self-Play and the Independence Problem}
+
+SPIN is a useful example because it sounds more different from SFT than it really is. The model generates responses, a discriminator-like objective asks the new model to distinguish preferred model outputs from weaker ones, and the policy updates toward the winning side of that comparison. The human labeler is gone, but the audit surface remains: which outputs are being treated as better, and why?
+
+The same warning applies to self-rewarding language models. Replacing a human judge with an AI judge changes the cost structure, not the epistemic problem. If the judge rewards verbosity, polished rationalization, or agreement with its own style, the loop can amplify those traits. If the judge is independently calibrated against held-out human, verifier, or adversarial evaluations, the loop can be useful.
+
+\paragraph{A useful rule.} Self-improvement is only as good as the independence of its evaluator. A loop that generates, judges, and trains with no outside pressure is not automatically recursive progress. It may simply become a sharper model of its own preferences.
+
+\subsection{Sharpening Loops and Support Narrowing}
+
+The lesson from Section~\ref{sec:rl-create-capability} applies directly. If one round of RL or preference optimization mostly sharpens, then many rounds may become multi-round sharpening. That can improve pass@1. It can also narrow support.
+
+Support narrowing is not automatically bad. A model that stops producing low-quality answers is better. The danger is losing rare but useful reasoning paths, styles, or uncertainty behaviors because the judge consistently favors a narrower pattern. In the control-room language from the old frontier framing, every iteration turns up the gain on the judge's preferences. If the judge is biased, the bias becomes sharper.
+
+\subsection{When Does Iteration Help?}
+
+Iteration is most likely to help when three conditions hold:
+
+\begin{itemize}[nosep]
+  \item \textbf{Fresh difficulty}: the next iteration includes tasks that are neither already solved nor impossible.
+  \item \textbf{Independent evaluation}: held-out evaluators are not generated by the same loop.
+  \item \textbf{Diversity monitoring}: the loop tracks not only score, but response diversity, length, uncertainty, and failure categories.
+\end{itemize}
+
+Without these conditions, self-improvement can become self-confirmation: the model learns to satisfy its own judge, and the judge agrees that the model improved.
+
+\paragraph{R1-Zero as partial example.} DeepSeek-R1-Zero (Chapter~\ref{ch:reasoning-rl}) is an instructive case. Its loop uses a verifier---not the model's own judgment---so the evaluator has real independence. Its reward variance decreases over training on easy prompts, which is a sign of support narrowing (the model converges on a few successful strategies). DeepSeek's fix was curriculum refresh: cycle in harder problems to maintain gradient signal. This matches condition~1 (fresh difficulty) and condition~3 (diversity monitoring). The lesson: even a verifier-backed loop can narrow support if the difficulty distribution is static.
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Self-improvement is generate, judge, filter, train, repeat.
+  \item If one update mostly sharpens, multiple updates can become repeated sharpening.
+  \item The main risk is not that iteration never works; it is that iteration narrows support while metrics rise.
+\end{itemize}
+\textit{Next: the same surfacing question appears when the supervisor is weaker than the model.}
+\end{quickrecap}
+
+
+%----------------------------------------------------------------------
+\section{Weak-to-Strong Generalization}
+\label{sec:weak-to-strong}
+
+Weak-to-strong generalization asks whether a weak supervisor can elicit capability from a stronger model. Burns et al.\ made this experimentally concrete: use weak model labels to supervise a stronger model, then measure whether the strong model exceeds the weak supervisor~\cite{burns2023weak}. The result was encouraging but incomplete. Strong models often generalize beyond weak labels, and auxiliary methods can help, but naive weak supervision does not recover the strong model's full capability.
+
+\paragraph{Audit surface for weak-to-strong.} Feedback source: labels from a weaker model. What the feedback can see: only the weak model's own capability boundary---it cannot label behaviors it does not understand. Optimization pressure: the strong model may learn the weak supervisor's systematic errors alongside its useful signal. Independent diagnostic: the performance gap recovered (PGR), defined as $\text{PGR} = (\text{weak-to-strong accuracy} - \text{weak accuracy}) / (\text{strong ceiling} - \text{weak accuracy})$. PGR near 1 means the strong model recovered its full capability despite weak labels; PGR near 0 means the weak labels anchored the strong model.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.2cm}p{3.1cm}p{3.4cm}X@{}}
+\toprule
+\textbf{Feedback source} & \textbf{What it sees} & \textbf{Pressure it creates} & \textbf{Independent diagnostic} \\
+\midrule
+Weak model labels or weak human labels & The weak supervisor's partial task boundary & Copy weak labels while selectively recovering latent strong-model structure & PGR as a function of weak--strong capability gap, plus blind-spot audits \\
+\bottomrule
+\end{tabularx}
+\normalsize
+\end{center}
+
+\paragraph{The Burns et al.\ setup.} The experiment used GPT-2-level models as weak supervisors to label NLP tasks, then trained GPT-4-level models on those labels. Key findings: (1)~naive weak supervision recovers partial but not full capability; (2)~auxiliary techniques (confidence-based filtering, bootstrapping) improve PGR; (3)~the gap between naive and auxiliary supervision grows with the capability difference between weak and strong models. The practical implication: as models become stronger than their human supervisors, the quality of the supervision protocol matters more than the quality of individual labels.
+
+\paragraph{The independent claim of this section: PGR scaling with capability gap.} Weak-to-strong is not just another example of surfacing. It gives the chapter a quantitative research object that §17.2 does not provide: how PGR changes as the weak--strong capability gap grows. Burns et al.'s most informative finding is not the average PGR range (0.2--0.7). It is how PGR behaves as the gap widens. A protocol that works when the supervisor is only slightly weaker may fail when the supervisor is far behind. Conversely, if an auxiliary method's PGR remains stable as the gap widens, that is much stronger evidence for scalable oversight than a single headline accuracy number.
+
+This is the superalignment community's central empirical question, and it is testable now. Each new generation of models creates a larger weak--strong gap with the previous generation. If PGR drops as the gap grows, weak supervision has a scaling wall. If PGR holds or rises, latent capability is robustly surfaceable. This is the weak-to-strong analogue of pass@$k$: do not ask only whether the tuned model improved; ask how much of the latent gap was recovered and whether that fraction survives a harder supervision gap.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch17/fig_weak_to_strong_setup.png}
+\caption{\textbf{Weak-to-strong supervision as surfacing test.} A weak supervisor labels examples for a stronger model. Success means the strong model recovers capability beyond the weak labeler. Failure means weak labels anchor the strong model to the supervisor's blind spots.}
+\label{fig:weak-to-strong-setup}
+\end{figure}
+
+\subsection{The Connection to Surfacing}
+
+Weak-to-strong is not a separate topic from Section~\ref{sec:rl-create-capability}. It is a special case of the same question. If the strong model has latent capability that the weak supervisor does not, can training surface that capability? Or does the weak signal pull the model toward weak behavior?
+
+This is why weak-to-strong is central to future alignment. Humans may be weak supervisors for future systems in domains where the model can reason faster, search larger spaces, or integrate more evidence. If weak supervision only teaches the model to imitate weak mistakes, it fails. If it can elicit stronger latent capability while preserving alignment, it becomes a path toward scalable oversight.
+
+\subsection{Good News and False Hope}
+
+The good news is that deep learning often generalizes beyond labels in useful ways. A model trained on imperfect labels can recover structure from pretraining, architecture, and data distribution. The Burns et al.\ experiments found PGR values between 0.2 and 0.7 on NLP tasks---meaning the strong model recovered 20--70\% of its latent advantage over the weak supervisor, not zero but not full recovery either. Auxiliary techniques (confidence-weighted loss, bootstrapping from high-confidence predictions) pushed PGR higher, suggesting that \emph{how} you use weak labels matters as much as the labels themselves.
+
+The false hope is assuming generalization always goes in the direction we want. A strong model may learn the weak supervisor's systematic blind spots, especially when those blind spots correlate with the labels. In safety-critical domains, this is not a minor concern: a weak supervisor that cannot detect subtle manipulation may train a strong model to be subtly manipulative while appearing aligned.
+
+The practical lesson is calibration. Weak-to-strong experiments are not a solved superalignment method. They are a benchmark for whether a supervision protocol elicits latent capability beyond the supervisor. The right question is not ``does weak supervision work?'' but ``which capability gap is recovered, and which blind spots remain?''
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Weak-to-strong supervision tests whether weak labels can elicit stronger model capability.
+  \item It connects directly to the surfacing question: can training surface capability the supervisor lacks?
+  \item Current evidence is promising but partial; the limits matter more than the headline.
+\end{itemize}
+\textit{Next: even if supervision scales, preference is not the whole alignment target.}
+\end{quickrecap}
+
+
+%----------------------------------------------------------------------
 \section{Alignment Beyond Preference}
 \label{sec:alignment-beyond}
 
-% Safety training (refusal, jailbreak resistance).
-% Honesty and calibration.
-% Helpfulness vs harmlessness trade-off.
-% Constitutional AI's deeper agenda.
+Preference learning is not alignment. Verifiable reward is not alignment. Both are ways to make a training signal. Alignment is a broader question: does the system behave helpfully, harmlessly, honestly, robustly, and corrigibly under distribution shift?
 
-\section{Open Problems}
+\paragraph{Audit surface for alignment.} Feedback source: varies per property (see table below). What the feedback can see: each source has a different coverage. Optimization pressure: a single reward that combines helpfulness and harmlessness hides which property is being traded for which. Independent diagnostic: separate evaluations per property, not a single aggregate score.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.2cm}p{3.1cm}p{3.4cm}X@{}}
+\toprule
+\textbf{Feedback source} & \textbf{What it sees} & \textbf{Pressure it creates} & \textbf{Independent diagnostic} \\
+\midrule
+Preference labels, safety labels, principles, verifiers, tool checks & Different slices of behavior: satisfaction, refusal, factuality, uncertainty, override response & Trade one alignment property against another inside one scalar objective & Property-specific evals: safety, factuality, calibration, abstention, jailbreak resistance \\
+\bottomrule
+\end{tabularx}
+\normalsize
+\end{center}
+
+\subsection{Multi-Objective Tension}
+
+Helpfulness, harmlessness, honesty, and calibration can conflict. A helpful model answers. An honest model sometimes refuses to guess. A harmless model avoids dangerous instructions. A calibrated model exposes uncertainty even when users prefer confidence. A single scalar reward can combine these properties, but the combination hides trade-offs.
+
+This is why Chapter~\ref{ch:rlhf}'s reward hacking discussion remains relevant. If the reward favors confident helpfulness, the model may become confidently wrong. If the reward favors harmlessness too strongly, the model may over-refuse. If the reward favors user satisfaction, the model may become sycophantic. Alignment beyond preference requires separate diagnostics for separate properties.
+
+\paragraph{The hardest pair: honesty and calibration.} Helpfulness and harmlessness are preference-sensitive: annotators can often compare which response is more useful or safer. Honesty and calibration are truth-sensitive: the evaluator must know whether the answer is true and whether the model's confidence matches evidence. That difference is categorical, not just a matter of better labels. A preference judge can reward a plausible answer that sounds expert; a calibration audit must test whether the model should have abstained, cited uncertainty, or used a tool. This is why honesty and calibration should not be treated as just two more rows in a preference rubric.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3cm}p{4.4cm}X@{}}
+\toprule
+\textbf{Property} & \textbf{Typical feedback source} & \textbf{Failure mode under optimization} \\
+\midrule
+Helpfulness & User preference, task completion, thumbs-up feedback & Sycophancy, overconfident answers, hidden overfitting to user taste \\
+Harmlessness & Safety labels, adversarial red-team data, policy rules & Over-refusal, brittle refusal templates, boundary gaming \\
+Honesty & Verified facts, abstention tasks, citations, tool checks & Confident hallucination, plausible rationalization, selective uncertainty \\
+Calibration & Forecasting tasks, confidence scoring, hidden-answer tests & Confidence inflation, under-disclosure of uncertainty, benchmark-specific hedging \\
+Corrigibility & Human override tests, instruction hierarchy, intervention tasks & Goal guarding, refusal to update, superficial compliance \\
+\bottomrule
+\end{tabularx}
+\normalsize
+\end{center}
+
+The point is not that each property needs a separate model. The point is that each property needs a separate audit. If a single reward improves all five, good; but without separate diagnostics, you do not know which property improved and which one was traded away.
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
+\textbf{Pause and verify.}\quad A scalar reward is defined as $R=0.7\,H+0.3\,S$, where $H$ is helpfulness and $S$ is harmlessness, each scaled from 0 to 1. (a)~A response with $H=1.0$ and $S=0$ receives $R=\;$? (b)~What is the \emph{maximum} $R$ achievable if $S=0$? (c)~A response with $H=0.75$ and $S=1.0$ receives $R=\;$? (d)~What does it mean for multi-objective optimization that a completely unsafe response ($S=0$) can still achieve 70\% of max reward? \emph{Hint}: compute the numbers, then ask whether a threshold constraint ($S \geq 0.5$) would change the optimizer's behavior.
+}}
+
+\subsection{Constitutional and Safety Training}
+
+Constitutional AI gives one approach: write principles, ask the model to critique and revise responses using those principles, then use AI feedback to train the model~\cite{bai2022constitutional}. Chapter~\ref{ch:rlhf} treated its mechanics. Here the important point is conceptual: written principles are not just more preferences. They make part of the objective explicit.
+
+Safety training also differs from ordinary preference alignment. Refusal behavior, jailbreak resistance, safe completion, and benign over-refusal require adversarial evaluation. The model must learn a boundary, not just a style. The boundary moves as users discover new attacks.
+
+\subsection{Honesty and Calibration}
+
+Honesty is especially hard because annotators often cannot verify the answer. If a confident answer sounds better than a cautious answer, preference optimization may reward confidence. The model can become helpful, harmless, and still confidently wrong.
+
+Calibration requires tasks where uncertainty is measurable: probability forecasts, abstention choices, hidden-answer evaluations, tool-verified facts, and post-deployment monitoring. It is not enough to ask which response users like. We need to ask whether the model's confidence tracks evidence.
+
+\subsection{Scalable Oversight Is the Unifying Problem}
+
+The three threads above---multi-objective tension, honesty as categorically hard, and safety as a boundary problem---all converge on a single bottleneck: scalable oversight. This is not just another alignment sub-topic; it is the organizing answer for the entire section.
+
+\paragraph{The sub-thesis.} The frontier is not one feedback source replacing all others. It is matching feedback sources to the properties they can actually audit:
+
+\begin{itemize}[nosep]
+  \item Preference labels are good at user satisfaction but blind to factual accuracy.
+  \item Verifiers are good at exact correctness but limited to domains with checkable answers.
+  \item Written principles (Constitutional AI) are good at making norms explicit but depend on interpretation.
+  \item Red teams are good at finding boundary failures but expensive and adversarial-specific.
+  \item Tool checks are good at truth in narrow domains but cannot cover open-ended reasoning.
+\end{itemize}
+
+None covers the whole alignment surface. This is why honesty and calibration are categorically harder than helpfulness and harmlessness: the first two require truth-sensitive oversight sources (tool checks, verifiable facts, expert review), while the latter two can often be audited by preference labels alone. A model can score well on helpfulness and harmlessness preference rubrics while being confidently, systematically wrong on factual questions---because the preference rubric does not check whether the answer is true, only whether it sounds good.
+
+\paragraph{The practical frontier.} Build oversight that is cheap enough to use during training, strong enough to detect the behavior that matters, and independent enough not to be gamed by the optimizer. This is a harder specification than ``make the reward better.'' It requires composing multiple feedback sources and knowing which source is responsible for which property.
+
+\begin{quickrecap}
+\textbf{Quick Recap.}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Preference is one feedback source, not the full alignment target.
+  \item Alignment properties conflict, so single-reward optimization can hide trade-offs.
+  \item Honesty and calibration require truth-sensitive evaluation, not just preference labels.
+  \item Scalable oversight is the problem of making feedback cheap, strong, and independent at the same time.
+\end{itemize}
+\textit{Next: collect the unresolved problems that remain after Part~III's post-training arc.}
+\end{quickrecap}
+
+
+%----------------------------------------------------------------------
+\section{Consolidated Open Problems}
 \label{sec:open-problems}
 
-% This is the chapter's PRIMARY VALUE section. Weight it heavily.
-%
-% Self-improvement evaluation closed-loop problem.
-% Weak-to-strong supervision bottleneck.
-% Preference signals beyond pairwise comparison.
-% Safety / honesty / capability tension.
-% Why post-training has no stable endgame yet.
-% Generalization of reasoning RL beyond math/code.
+The frontier problems are not new topics bolted onto the chapter. They are the unresolved tails of Sections~\ref{sec:rl-create-capability}--\ref{sec:alignment-beyond}.
 
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.1cm}p{3.4cm}p{4.2cm}X@{}}
+\toprule
+\textbf{Open problem} & \textbf{Where it came from} & \textbf{Core question} & \textbf{What would count as progress} \\
+\midrule
+Reasoning beyond verifiable domains & RLVR works best with math/code verifiers & What feedback works for medical, legal, creative, or scientific reasoning? & Benchmarks where expert, tool, and process checks predict real-world expert review. \\
+Discovery vs elicitation & Pass@$k$ and spurious rewards & When does post-training expand support rather than sharpen it? & Evidence that high-$k$ support grows, not only pass@1. \\
+Self-improvement stability & Iterative generate-filter-train loops & When does iteration improve capability rather than narrow support? & Multi-round curves tracking score, diversity, length, calibration, and held-out human/verifier judgment. \\
+Weak supervision & Weak-to-strong experiments & Can weak supervisors surface capabilities they cannot directly verify? & PGR that stays high as the weak--strong capability gap widens. \\
+Multi-objective alignment & Preference, safety, honesty, calibration & How should conflicting objectives be optimized and audited? & Methods with explicit per-property constraints, not only scalar reward averages. \\
+Sample efficiency & GRPO and RLVR rollout cost & Can reasoning RL become less rollout-dominated without losing exploration? & Fewer rollouts per improvement point at fixed verifier quality and diversity. \\
+Oversight composition & Preference, verifier, principle, and weak-supervisor signals & How do we combine feedback sources without hiding objective conflicts? & Composable oversight protocols with ablations showing which source catches which failure. \\
+\bottomrule
+\end{tabularx}
+\normalsize
+\end{center}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch17/fig_open_problem_matrix.png}
+\caption{\textbf{Open problems as audit targets.} Each frontier question pairs a feedback source with an independent diagnostic and a concrete sign of progress. The point is to turn ``open problem'' from an inventory label into a research-direction guide: what evidence would make the field update?}
+\label{fig:open-problem-matrix}
+\end{figure}
+
+\paragraph{How to read the table.} The fourth column is deliberately not ``next paper to read.'' It is a research-direction test. If a proposed method cannot say what observation would change its mind, it is probably not yet an audit.
+
+\paragraph{The three most tractable problems.}
+
+\textbf{Discovery vs elicitation} is the most testable. The diagnostic infrastructure already exists: compute pass@$k$ at several $k$ values before and after training, track solution-strategy diversity (not just accuracy), and run spurious-reward ablations when feasible. The gap is that most RLVR papers report only pass@1. Building pass@$k$ dashboards into training runs would let the community measure capability boundaries by default rather than after the fact. A single PhD project could standardize this protocol across GSM8K, MATH, and LiveCodeBench.
+
+\textbf{Weak supervision scaling} has a clean experimental recipe: train progressively stronger models using the same weak supervisor, plot PGR as a function of the weak--strong gap, and test whether auxiliary techniques (confidence filtering, bootstrapping) shift the curve. The key deliverable is not a single PGR number but a PGR curve. If the curve is flat or rising as the gap widens, that is strong evidence for scalable oversight. If the curve falls, the community needs to know at what gap width it fails.
+
+\textbf{Multi-objective alignment auditing} is actionable now. Replace scalar reward averages with per-property dashboards that track helpfulness, harmlessness, honesty, and calibration separately. The scalarized-reward Pause and verify in Section~\ref{sec:alignment-beyond} showed how a single scalar can hide total failure on one property. Requiring explicit per-property thresholds or constraints during training---not only during evaluation---would make these trade-offs visible. The research question is whether threshold-constrained multi-objective optimization produces qualitatively different models than scalarized optimization.
+
+\paragraph{Longer-horizon problems.} Reasoning beyond verifiable domains (medical, legal, creative) and oversight composition (combining preference, verifier, principle, and weak-supervisor signals without hiding conflicts) are important but less tractable today. They depend on building the feedback infrastructure---expert evaluation protocols, domain-specific verifiers, interpretable oversight decompositions---that does not yet exist at training-time scale. These are program-level research directions rather than single-project ones.
+
+
+%----------------------------------------------------------------------
 \section{Part III Closing Reflection}
 \label{sec:part3-reflection}
 
-% The 2022-2026 post-training arc.
-% What students have learned to do across Ch.11-17.
-% Forward reference to research opportunities.
-% Parallel to Ch.10's Part II retrospective.
+Part~III began with supervised behavior cloning and ended with an epistemic audit of post-training itself. The 2022--2026 arc can be read as four shifts:
+
+\begin{enumerate}[nosep]
+  \item \textbf{2022 InstructGPT}: RL is an alignment tool built from demonstrations, preferences, reward models, and PPO.
+  \item \textbf{2023 DPO}: much of the RLHF preference objective can be optimized without online RL machinery.
+  \item \textbf{2024--2025 o1/R1}: RL becomes a capability tool when verifiable rewards make large-scale reasoning attempts cheap to score.
+  \item \textbf{2025--2026 audit}: the field asks whether these methods create new capability, surface latent capability, or narrow policies toward high-scoring behavior.
+\end{enumerate}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ch17/fig_part3_arc.png}
+\caption{\textbf{The 2022--2026 post-training arc.} Part~III progresses from demonstrations to preferences, learned rewards, verifiable rewards, and finally an epistemic audit: what did post-training actually change? The same methods that improve pass@1 can leave open whether capability was created, composed, or surfaced.}
+\label{fig:part3-arc}
+\end{figure}
+
+After Part~III, you should be able to read a post-training paper and locate its contribution in the design space: data source, feedback source, optimizer, regularizer, evaluation protocol, and failure mode. You should be able to run small SFT, DPO, and verifier-backed training loops. You should also be able to ask the harder question: what evidence shows that the method changed the model in the way the authors claim?
+
+\paragraph{The Part~III lesson.} Post-training is feedback engineering. Demonstrations, preferences, learned rewards, verifiers, weak supervisors, and self-generated judges are all feedback sources. The methods differ in how they turn feedback into gradients. The frontier is whether the feedback source remains trustworthy under optimization pressure---and a verifier is not merely an evaluator that checks answers. It is a curriculum generator that determines which failures the model can learn from and which successes it reinforces. That reframing changes the frontier question from ``which optimizer is best?'' to ``which feedback source keeps teaching as the model improves?''
+
+\paragraph{The audit habit.} For every post-training result, ask three questions before asking whether the algorithm is clever: what feedback source selected the behavior, what blind spot could that source have, and what independent diagnostic would reveal the blind spot? This habit is the bridge from being able to reproduce post-training recipes to being able to evaluate post-training research.
 
 
 %----------------------------------------------------------------------
 % End matter
 %----------------------------------------------------------------------
 
-% \subsection*{Summary}
-% \subsection*{Key Readings}
+\begin{takeaways}
+\begin{enumerate}
+  \item Ch17 is an epistemic audit of the post-training arc, not a frontier-paper inventory.
+  \item Low-$k$ and high-$k$ pass rates separate user-facing success from distributional capability.
+  \item Current evidence suggests LLM RLVR often sharpens and composes latent behavior more than it discovers new capability.
+  \item Spurious-reward results show that measured gains can come from training-loop effects, formatting, confidence, and sampling shifts.
+  \item Self-improvement loops are repeated sharpening loops unless their evaluators, data, and diversity are independently audited.
+  \item Weak-to-strong generalization asks whether weak supervision can surface capability the supervisor lacks.
+  \item Alignment beyond preference requires separate treatment of safety, honesty, calibration, and multi-objective trade-offs.
+  \item Frontier methods should be read through their feedback source, blind spots, and independent diagnostics, not only through their optimizer.
+\end{enumerate}
+\end{takeaways}
+
+
+\section*{Summary}
+
+\paragraph{What this chapter established.} The previous chapters taught how to run post-training methods. This chapter asked what those methods do. The main evidence came from pass@$k$ diagnostics, spurious rewards, the sharpening/composition/discovery taxonomy, and the contrast between RL exploration and distillation. The conclusion is not that post-training is weak. The conclusion is that improvement is not a single phenomenon. It can mean better first-sample behavior, broader accessible support, more reliable composition, or genuine discovery.
+
+\paragraph{The epistemic audit lesson.} The named lesson of this chapter is the epistemic audit. A training curve tells you that a metric improved. It does not tell you whether the model learned a new capability, surfaced a latent one, or narrowed its distribution around a reward artifact. A PhD-prep reader should ask for the diagnostic that distinguishes those explanations.
+
+\paragraph{One sentence.} \emph{We know how to post-train models; we are still learning how to tell what post-training changed.}
+
+\paragraph{What comes next.} Part~IV turns from training recipes to deployment. The lesson from Part~III should travel with you: every deployed behavior is downstream of a feedback source, and every feedback source deserves an audit.
+
+\section*{Key Equations at a Glance}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.5cm}p{5.2cm}X@{}}
+\toprule
+\textbf{Equation} & \textbf{Form} & \textbf{Why it matters} \\
+\midrule
+pass@$k$ & $p_k = 1 - (1-p_1)^k$ under independent samples & Shows why high-$k$ sampling probes accessible support rather than only first-attempt behavior. \\
+Performance gap recovered & $\text{PGR} = \dfrac{a_{\text{W2S}} - a_{\text{weak}}}{a_{\text{strong}} - a_{\text{weak}}}$ & Measures how much of a strong model's latent advantage survives weak supervision. \\
+Scalarized multi-objective reward & $R = \sum_i w_i R_i$ & Reminds us that aggregate reward can hide failure on a property with small weight. \\
+\bottomrule
+\end{tabularx}
+\normalsize
+\end{center}
+
+\section*{Key Checks}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.5cm}p{5cm}X@{}}
+\toprule
+\textbf{Diagnostic} & \textbf{Question} & \textbf{Action} \\
+\midrule
+pass@$k$ curve & Did RL improve only low-$k$ success, or also expand high-$k$ solution support? & Plot pass@$k$ before and after tuning, not only pass@1. \\
+Spurious reward control & Does improvement persist when the reward contains little semantic information? & Run random, format-only, and wrong-reward ablations when feasible. \\
+Support diversity & Did successful trajectories become more diverse or more narrow? & Track length, strategy clusters, self-correction markers, and high-$k$ diversity. \\
+Teacher distillation comparison & Can a teacher inject patterns the student could not discover by sampling? & Compare RL-only against teacher-trace distillation at fixed compute. \\
+Held-out verifier / judge & Does the gain survive independent evaluation? & Separate training verifier from audit verifier or human/expert review. \\
+Iteration audit & Does a self-improvement loop preserve diversity and reduce errors over rounds? & Log judge score, held-out score, response length, calibration, and diversity each round. \\
+\bottomrule
+\end{tabularx}
+\normalsize
+\end{center}
+
+
+\section*{Key Readings}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Yue et al., 2025.} ``Does Reinforcement Learning Really Incentivize Reasoning Capacity in LLMs Beyond the Base Model?''~\cite{yue2025rlreasoning}. The pass@$k$ diagnostic and capability-boundary challenge that anchor this chapter.
+  \item \textbf{Liu et al., 2025.} ``Spurious Rewards: Rethinking Training Signals in RLVR''~\cite{liu2025spurious}. Evidence that some RLVR gains can arise even under random, incorrect, or weakly informative rewards.
+  \item \textbf{DeepSeek-AI, 2025.} ``DeepSeek-R1''~\cite{deepseekai2025r1}. The central public case for verifier-backed reasoning RL and the R1-Zero/R1 distinction.
+  \item \textbf{Zelikman et al., 2022.} ``STaR''~\cite{zelikman2022star}. A generate-filter-train loop for bootstrapping reasoning traces.
+  \item \textbf{Gulcehre et al., 2023.} ``ReST''~\cite{gulcehre2023rest}. A general formulation of reinforced self-training.
+  \item \textbf{Burns et al., 2023.} ``Weak-to-Strong Generalization''~\cite{burns2023weak}. The cleanest experimental setup for weak supervision of stronger models.
+  \item \textbf{Bai et al., 2022.} ``Constitutional AI''~\cite{bai2022constitutional}. Principle-based alignment beyond direct pairwise preference labels.
+  \item \textbf{Silver et al., 2018.} ``A General Reinforcement Learning Algorithm that Masters Chess, Shogi, and Go through Self-Play''~\cite{silver2018alphazero}. The canonical contrast case for structured RL discovery.
+\end{enumerate}
+
+\flushbottom

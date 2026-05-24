@@ -29,7 +29,8 @@ After completing this chapter, you should be able to:
   \item Define the components of a Markov Decision Process (state, action, reward, policy, value) and write the Bellman equation.
   \item Explain why autoregressive language generation is a degenerate MDP with deterministic transitions and sparse reward.
   \item Derive the REINFORCE gradient estimator and explain why it has high variance.
-  \item Explain why PPO uses a clipped surrogate objective instead of the raw policy gradient.
+  \item Explain why PPO uses a clipped surrogate objective instead of the raw policy gradient, and why clipping is applied per token.
+  \item Describe the role of the value model (critic) in advantage estimation, and explain why eliminating it motivates critic-free algorithms like GRPO.
   \item Articulate why LLM RL requires a KL constraint to a reference policy, and connect this to the KL-constrained objective from Chapter~\ref{ch:preference-learning}.
 \end{enumerate}
 
@@ -128,7 +129,7 @@ Reinforcement learning formalizes sequential decision-making as a \textbf{Markov
   \item \textbf{Action space $\mathcal{A}$}: the set of all actions available. For a language model, this is the vocabulary $\mathcal{V}$---each action is choosing the next token.
   \item \textbf{Transition function $P(s' \mid s, a)$}: the probability of reaching state $s'$ after taking action $a$ in state $s$. For text generation, this is deterministic: appending token $a_t$ to $s_t$ always gives $s_{t+1} = s_t \oplus a_t$. No dice rolls, no physics noise.
   \item \textbf{Reward function $r(s, a)$}: the scalar feedback after taking action $a$ in state $s$. In LLM RL, reward is typically zero at every step except the last, where a verifier or reward model scores the complete response.
-  \item \textbf{Discount factor $\gamma \in [0, 1)$}: how much the agent values future rewards relative to immediate ones. In LLM RL, $\gamma$ is usually set to 1 (no discounting) because episodes are short and all reward arrives at the end.
+  \item \textbf{Discount factor $\gamma \in [0, 1]$}: how much the agent values future rewards relative to immediate ones. Classical RL typically uses $\gamma < 1$ to ensure bounded returns in infinite-horizon problems. In LLM RL, episodes are finite (bounded by maximum sequence length), so $\gamma = 1$ (no discounting) is standard---the agent values all future tokens equally.
 \end{enumerate}
 
 Notice how many simplifications appeared before we even started: deterministic transitions, sparse reward, no discounting. Section~\ref{sec:llm-mdp} will unpack these in full. For now, we continue with the general formalism to define the quantities that every RL algorithm uses.
@@ -191,17 +192,19 @@ The MDP formalism from \S\ref{sec:mdp} describes general sequential decision-mak
 Consider your 3B model generating a response to the prompt ``Solve: $7 \times 8 + 3$''. At each step, the model selects the next token. Here is how this maps to the MDP:
 
 \begin{center}
-\begin{tabular}{lll}
+\small
+\begin{tabularx}{\textwidth}{@{}lXX@{}}
 \toprule
 \textbf{MDP Component} & \textbf{General RL} & \textbf{LLM Generation} \\
 \midrule
-State $s_t$ & Sensor readings, positions & Prompt $+$ tokens generated so far \\
+State $s_t$ & Sensor readings, positions & Prompt $+$ generated tokens \\
 Action $a_t$ & Joint torques, button press & Next token from vocabulary $\mathcal{V}$ \\
-Transition $P(s_{t+1} \mid s_t, a_t)$ & Stochastic physics & Deterministic: $s_{t+1} = s_t \oplus a_t$ \\
+Transition $P(s_{t+1} \mid s_t, a_t)$ & Stochastic physics & Deterministic append: $s_{t+1} = s_t \oplus a_t$ \\
 Reward $r(s_t, a_t)$ & Dense per-step signal & Sparse: $r = 0$ until end-of-sequence \\
-Episode length & 100--10{,}000 steps & 50--2{,}000 tokens \\
+Episode length & 100--10{,}000 steps & 50--10{,}000+ tokens; reasoning models can be much longer \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
+\normalsize
 \end{center}
 
 Three properties make LLM RL a degenerate MDP:
@@ -244,12 +247,15 @@ Purists might object: if transitions are deterministic, reward is sparse, and th
 This is good news for you. It means that the RL machinery you need for Chapters~\ref{ch:rlhf} and~\ref{ch:reasoning-rl} is narrower than what a robotics RL course would teach. Model-based planning, multi-agent coordination, and sophisticated exploration theory are not the center of the story here. The load-bearing tools are policy gradients, variance reduction, clipped or regularized policy updates, and KL control. That is what the rest of this chapter provides.
 \end{tcolorbox}
 
+\paragraph{Densifying the sparse signal.} Sparse end-of-sequence reward makes credit assignment hard: which of 200 tokens caused the reward? One approach is \textbf{reward shaping}---adding intermediate rewards that guide the policy without waiting for the final score. Examples include format rewards (small bonus for well-structured output), length penalties (discouraging unnecessary verbosity), and \textbf{process reward models} (PRMs) that score individual reasoning steps rather than the final answer. Process rewards are central to reasoning RL; Chapter~\ref{ch:reasoning-rl} develops them in full. For now, the key insight is that sparse reward is the default in LLM RL, but it is not the only option---and much of the engineering of reasoning-RL systems involves finding principled ways to densify the signal.
+
 \begin{quickrecap}
 \textbf{Quick Recap.}
 \begin{itemize}[nosep,leftmargin=1.5em]
   \item LLM generation maps to an MDP with deterministic transitions, sparse end-of-sequence reward, and known dynamics.
   \item These simplifications make LLM RL narrower than general RL. The environment dynamics are known and deterministic; most uncertainty comes from the policy and the reward signal.
   \item Alternative framing: LLM RL is a contextual bandit where the action is the full response and the policy factorizes autoregressively.
+  \item Sparse reward is the default but not the only option: reward shaping and process rewards can densify the signal (Chapter~\ref{ch:reasoning-rl}).
 \end{itemize}
 \textit{Next: how to compute a gradient through a reward signal.}
 \end{quickrecap}
@@ -376,7 +382,11 @@ The problem is especially severe for language models. Recall that $\pi_\theta(y 
 \rho = \prod_{t=1}^{T} \frac{\pi_\theta(y_t \mid x, y_{<t})}{\pi_{\theta_{\text{old}}}(y_t \mid x, y_{<t})}
 \]
 
-Even small per-token changes compound. A per-token ratio of 1.05 means the new policy assigns 5\% more probability to that token---barely noticeable for any single token. But for a 200-token response: $1.05^{200} \approx 17{,}000$. This one sample would dominate a batch of thousands. This is why naively applying importance sampling to LLMs fails catastrophically, and why PPO's clipping mechanism (\S\ref{sec:ppo}) is essential.
+Even small per-token changes compound. A per-token ratio of 1.05 means the new policy assigns 5\% more probability to that token---barely noticeable for any single token. But for a 200-token response: $1.05^{200} \approx 17{,}000$. This one sample would dominate a batch of thousands. This is why naively applying importance sampling to LLMs fails catastrophically---and why PPO (\S\ref{sec:ppo}) clips \emph{per-token} ratios rather than using the sequence-level ratio, bounding each $\rho_t$ to $[1{-}\epsilon, 1{+}\epsilon]$ so that the compounding cannot start.
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
+\textbf{Pause and verify.} Your 3B model generates a 100-token response. After one gradient step, the per-token probability ratio averages $\rho_t = 1.02$. What is the approximate sequence-level ratio? ($1.02^{100} \approx 7.2$.) Now suppose the average per-token ratio is $1.10$. ($1.10^{100} \approx 1.4 \times 10^{4}$.) \emph{A 10\% per-token shift---barely visible at any single position---produces a sequence-level ratio in the tens of thousands. This is why per-token clipping is essential.}
+}}
 
 \begin{quickrecap}
 \textbf{Quick Recap.}
@@ -428,18 +438,36 @@ The $\min$ operator selects the more conservative estimate. This creates a ``tru
 \label{fig:ppo-clipping}
 \end{figure}
 
+\subsection{The Value Model}
+\label{sec:value-model}
+
+The advantage estimates in PPO require a value function $V(s_t)$---but where does it come from? In practice, the \textbf{value model} (also called the \textbf{critic}) is a separate neural network that learns to predict the expected return from any partial sequence. Its architecture is typically the same transformer backbone as the policy, with a single scalar output head replacing the vocabulary projection. It is often initialized from the SFT checkpoint or the reward model.
+
+The value model is trained with a simple supervised objective: minimize the squared error between its prediction and the realized return:
+
+\begin{equation}
+\label{eq:value-loss}
+\mathcal{L}_V = \mathbb{E}\!\left[\left(V_\phi(s_t) - R_t\right)^2\right]
+\end{equation}
+
+where $R_t$ is the Monte Carlo return from step $t$ (or a bootstrapped target). This loss is computed alongside the PPO policy loss at each training step---the value model improves its predictions as the policy changes.
+
+\paragraph{The cost of a critic.} The value model is roughly the same size as the policy. Combined with the policy itself, the frozen reference policy, and the reward model, PPO-based RLHF requires \textbf{four model-sized objects} in memory simultaneously---this is the operational burden that Chapter~\ref{ch:preference-learning} \S\ref{sec:rlhf-motivation} described and that DPO was designed to avoid. It is also the key motivation for GRPO (Chapter~\ref{ch:reasoning-rl}), which eliminates the value model entirely by replacing $V(s_t)$ with a group-level mean reward computed from multiple samples of the same prompt. No critic, no critic-sized memory cost.
+
 \subsection{Generalized Advantage Estimation (GAE)}
 
-The advantage $\hat{A}_t$ in Equation~\ref{eq:ppo-clip} needs to be estimated. In standard RL with per-step rewards, \textbf{Generalized Advantage Estimation} (GAE)~\cite{schulman2016gae} computes the advantage as an exponentially weighted average of $n$-step returns:
+The advantage $\hat{A}_t$ in Equation~\ref{eq:ppo-clip} needs to be estimated. Given the value model from \S\ref{sec:value-model}, \textbf{Generalized Advantage Estimation} (GAE)~\cite{schulman2016gae} computes the advantage as an exponentially weighted average of $n$-step returns:
 
 \begin{equation}
 \label{eq:gae}
 \hat{A}_t^{\text{GAE}} = \sum_{l=0}^{T-t} (\gamma \lambda)^l \, \delta_{t+l}, \quad \text{where} \quad \delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)
 \end{equation}
 
-The parameter $\lambda \in [0, 1]$ trades off bias and variance: $\lambda = 0$ gives the one-step TD residual (low variance, high bias), $\lambda = 1$ gives the full Monte Carlo return (high variance, low bias).
+The quantity $\delta_t$ is the \textbf{TD residual}---the Bellman backup error from Equation~\ref{eq:bellman}. It measures how much the value function's prediction at $s_t$ mismatches the realized reward plus the discounted next-state value. If the value model were perfect, every $\delta_t$ would be zero. In practice, nonzero residuals tell the advantage estimator where the value model is surprised---and therefore where the policy update carries the most signal.
 
-\paragraph{GAE for LLMs.} In the standard LLM-RL setup with end-of-sequence reward only, intermediate rewards $r_t$ are zero for all $t < T$. GAE simplifies: the advantage at each token is determined by the difference between the eventual reward and the value function's prediction. In practice, the value model (a separate network or a head on the policy) learns to predict the expected reward from any partial sequence. GRPO (Chapter~\ref{ch:reasoning-rl}) avoids the value model entirely by using a simpler group-level baseline, but the PPO-based RLHF systems in Chapter~\ref{ch:rlhf} use GAE with a learned value function.
+The parameter $\lambda \in [0, 1]$ trades off bias and variance: $\lambda = 0$ gives the one-step TD residual (low variance, high bias), $\lambda = 1$ gives the full Monte Carlo return (high variance, low bias). In practice, $\lambda = 0.95$ is the standard default for PPO-based RLHF.
+
+\paragraph{GAE for LLMs.} In the standard LLM-RL setup with end-of-sequence reward only, intermediate rewards $r_t$ are zero for all $t < T$. GAE simplifies: the TD residual at each intermediate step reduces to $\delta_t = \gamma V(s_{t+1}) - V(s_t)$, capturing only the value model's evolving prediction. At the final step, $\delta_T = r_T - V(s_T)$, the difference between the actual reward and the value model's prediction. The value model thus serves as the learned baseline that §\ref{sec:policy-gradient} motivated: it tells the policy how good a ``typical'' response would be from any point in the generation, so that the advantage reflects how much \emph{better or worse} the actual continuation was.
 
 \subsection{PPO in Practice}
 
@@ -453,11 +481,41 @@ A typical PPO training step for LLMs:
   \item \textbf{Replace}: set $\pi_{\theta_{\text{old}}} \leftarrow \pi_\theta$ and repeat.
 \end{enumerate}
 
+\paragraph{Token-level clipping.} A subtle but important point: in practice, the PPO clipped objective is applied \emph{per token}, not per sequence. The importance ratio $\rho_t = \pi_\theta(y_t \mid x, y_{<t}) / \pi_{\theta_{\text{old}}}(y_t \mid x, y_{<t})$ is computed at each position, and clipping is applied to each $\rho_t$ individually. This is precisely the mechanism that defuses \S\ref{sec:importance-sampling}'s compounding-ratio problem: although the \emph{sequence-level} ratio can explode ($1.05^{200} \approx 17{,}000$), each \emph{per-token} ratio is bounded to $[1{-}\epsilon, 1{+}\epsilon]$, so per-token gradient updates remain stable. When you read RLHF or GRPO implementations, you will see the loss summed over tokens within each response, not computed once per response.
+
+\paragraph{The full PPO objective.} Production PPO implementations add two further terms beyond the clipped surrogate:
+\[
+\mathcal{L} = \mathcal{L}^{\text{PPO}} + c_1 \cdot \mathcal{L}_V - c_2 \cdot \mathcal{H}[\pi_\theta]
+\]
+The value-function loss $\mathcal{L}_V$ (Equation~\ref{eq:value-loss}) trains the critic alongside the policy. The entropy bonus $\mathcal{H}[\pi_\theta]$ (with small coefficient $c_2 \approx 0.01$) prevents premature mode collapse by penalizing overly peaked token distributions. The entropy bonus is distinct from the KL penalty (\S\ref{sec:kl-rl}): KL measures distance from the \emph{reference policy}, entropy measures the policy's own distributional breadth. We focus on the clipped surrogate as the conceptual core, but you will encounter all three terms in code.
+
 \paragraph{For Project~3.} If you were to use PPO on your 3B model with a math verifier: generate 8 responses per prompt, score each with the verifier (1 = correct, 0 = incorrect), compute advantages (correct responses get positive advantage, incorrect get negative), and update the policy for 4 mini-batch epochs with clip $\epsilon = 0.2$. The clipping ensures that even if one correct response has an unusually high log-probability ratio, it does not keep receiving extra credit once the policy has moved beyond the trust region.
 
 \noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}{%
 \textbf{Pause and verify.} In the PPO objective (Equation~\ref{eq:ppo-clip}), suppose $\hat{A}_t > 0$ and $\rho_t = 1.3$ with $\epsilon = 0.2$. The unclipped term is $1.3 \times \hat{A}_t$. The clipped term is $\text{clip}(1.3, 0.8, 1.2) \times \hat{A}_t = 1.2 \times \hat{A}_t$. The $\min$ selects $1.2 \times \hat{A}_t$. \emph{This sample no longer receives additional objective value from increasing $\rho_t$ further}---the policy has already moved past the trust region for this action. This is PPO's stabilizing effect: extreme probability-ratio changes stop dominating the update.
 }}
+
+\begin{tcolorbox}[colback=blue!5, colframe=blue!40, title=\textbf{Worked Example: One PPO Step on Math}]
+Walk through a single PPO training step for your 3B model with a math verifier.
+
+\textbf{1.~Rollout.} Prompt: ``Solve: $7 \times 8 + 3$.'' The model generates 4 responses:
+\begin{itemize}[nosep]
+  \item $y_1$: ``$7 \times 8 = 56$, $56 + 3 = 59$. The answer is \textbf{59}.'' (32 tokens)
+  \item $y_2$: ``Let me think... $7 \times 8 = 54$, so the answer is \textbf{57}.'' (28 tokens)
+  \item $y_3$: ``$7 \times 8 + 3 = 59$.'' (12 tokens)
+  \item $y_4$: ``The answer is $7 + 8 \times 3 = 31$. So \textbf{31}.'' (22 tokens)
+\end{itemize}
+
+\textbf{2.~Score.} The verifier checks final answers: $r = [1, 0, 1, 0]$.
+
+\textbf{3.~Advantage.} The value model estimates $V(x) \approx 0.45$ for this prompt. Advantages: $\hat{A} = [+0.55, -0.45, +0.55, -0.45]$. Correct responses get positive advantage; incorrect ones get negative.
+
+\textbf{4.~Per-token clipping.} Consider token $t{=}5$ in $y_1$, where $\pi_\theta$ assigns probability 0.12 and $\pi_{\theta_\text{old}}$ assigned 0.10. The per-token ratio is $\rho_5 = 1.2$. With $\epsilon = 0.2$, $\text{clip}(\rho_5, 0.8, 1.2) = 1.2$. The token is at the boundary---further probability increases for this token will produce no additional gradient signal.
+
+\textbf{5.~Update.} Aggregate the per-token clipped objectives across all 4 responses. Take $K{=}4$ mini-batch gradient steps. Set $\pi_{\theta_\text{old}} \leftarrow \pi_\theta$. Sample new prompts and repeat.
+
+\textbf{After this step}: the model is slightly more likely to produce response styles like $y_1$ and $y_3$ (correct), and slightly less likely to produce $y_2$'s arithmetic error or $y_4$'s operator-precedence mistake. Over thousands of steps, these small shifts compound into reliable math capability.
+\end{tcolorbox}
 
 \begin{quickrecap}
 \textbf{Quick Recap.}
@@ -489,6 +547,8 @@ J_{\text{KL}}(\theta) = \mathbb{E}_{y \sim \pi_\theta}\!\left[r(x, y)\right] - \
 \begin{tcolorbox}[colback=gray!8, colframe=gray!40]
 \textbf{Echo: the KL-constrained objective.} You have seen this equation before. In Chapter~\ref{ch:preference-learning} \S\ref{sec:kl-objective}, we introduced the same objective as ``an optimization problem, not an RL problem'' and derived its closed-form solution---which led to DPO. Now you see where the objective comes from: it is the natural RL objective with a regularization term that prevents the policy from drifting too far from the reference. In DPO, you solve it in closed form and avoid RL entirely. In RLHF (Chapter~\ref{ch:rlhf}), you optimize it directly with PPO. Same objective, two different optimization strategies.
 \end{tcolorbox}
+
+\paragraph{A note on $\beta$.} The $\beta$ in Equation~\ref{eq:kl-rl-objective} and the $\beta$ in the DPO loss (Chapter~\ref{ch:preference-learning}, Equation~\ref{eq:dpo-loss}) play similar conceptual roles---both control how far the policy can drift from the reference---but they are not numerically comparable. DPO's $\beta$ scales the log-probability margin inside a sigmoid; RLHF's $\beta$ scales a KL divergence term against the reward. A DPO $\beta$ of 0.1 and a PPO $\beta$ of 0.05 are not directly comparable values. When you move between the two frameworks, do not transfer $\beta$ values.
 
 \subsection{Why the KL Penalty Is Essential}
 
@@ -527,7 +587,7 @@ The coefficient $\beta$ in Equation~\ref{eq:kl-rl-objective} is a critical hyper
   \item \textbf{Too small}: the policy over-optimizes the reward model. You get high proxy reward but low actual quality.
 \end{itemize}
 
-Some implementations use \textbf{adaptive KL}: set a target KL divergence (e.g., 6 nats), and adjust $\beta$ dynamically to keep $D_{\text{KL}}[\pi_\theta \| \pi_{\text{ref}}]$ near this target. When the KL is too high, increase $\beta$ (slow down). When it is too low, decrease $\beta$ (allow more exploration). InstructGPT used this adaptive scheme~\cite{ouyang2022instructgpt}.
+Some implementations use \textbf{adaptive KL}: set a target KL divergence (e.g., 6 nats), and adjust $\beta$ dynamically to keep $D_{\text{KL}}[\pi_\theta \| \pi_{\text{ref}}]$ near this target. The rule is simple: when the measured KL exceeds $1.5\times$ the target, double $\beta$; when it falls below $0.5\times$ the target, halve $\beta$. This keeps the policy in a stable KL band without manual tuning. InstructGPT used this adaptive scheme~\cite{ouyang2022instructgpt}.
 
 \begin{tcolorbox}[colback=orange!5, colframe=orange!60, title=\textbf{For Project~3: KL in Practice}]
 If you use PPO to train your 3B model on math verification rewards:
@@ -561,7 +621,7 @@ But RL as a field is far broader. Understanding what we \emph{did} cover is easi
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.95\textwidth]{figures/ch14/fig_rl_landscape.png}
-\caption{\textbf{The RL landscape: what we covered vs.\ what exists.} This chapter covered the policy-gradient family (REINFORCE $\to$ TRPO $\to$ PPO), which is the branch most directly used in LLM RLHF and reasoning-RL systems. Value-based methods (Q-learning, DQN), model-based methods (world models, planning), and multi-agent RL are important elsewhere in RL, but they are not central to the post-training pipeline this part of the book studies.}
+\caption{\textbf{The RL landscape: what we covered vs.\ what exists.} This chapter covered the policy-gradient family (REINFORCE $\to$ TRPO $\to$ PPO), which is the branch most directly used in LLM RLHF and reasoning-RL systems. The muted branches show representative areas we did not cover in depth---value-based methods, model-based methods, exploration-heavy methods, and multi-agent RL. The text also briefly positions offline RL and temporal credit assignment, but the figure is a scope map rather than a complete RL taxonomy.}
 \label{fig:rl-landscape}
 \end{figure}
 
@@ -570,7 +630,7 @@ But RL as a field is far broader. Understanding what we \emph{did} cover is easi
   \item \textbf{Model-based RL.} Learns a model of the environment and uses it for planning. Unnecessary for LLM RL because the environment (token concatenation) is already known.
   \item \textbf{Exploration theory.} Classical RL struggles with exploration---how to visit new states when the agent does not know what is rewarding. LLM RL has a natural first mechanism: sampling from the policy. Temperature, top-$p$, and generating multiple responses per prompt provide diversity. This does not make exploration solved, especially for hard reasoning tasks; it only means that exploration is not the organizing problem for this chapter's core algorithms.
   \item \textbf{Multi-agent RL.} Not currently used in post-training, though self-play (Chapter~\ref{ch:frontiers}) involves related ideas.
-  \item \textbf{Offline RL.} Learning from a fixed dataset without further environment interaction. DPO (Chapter~\ref{ch:preference-learning}) can be viewed as a form of offline RL, but the connection is not central to this course.
+  \item \textbf{Offline RL.} Learning from a fixed dataset without further environment interaction. DPO (Chapter~\ref{ch:preference-learning}) can be viewed as a form of offline RL: it optimizes a policy using a fixed preference dataset without rollouts from the current policy. The cost is what Chapter~\ref{ch:preference-learning} \S\ref{sec:iterative-dpo} called distribution shift---the training pairs may not reflect the current policy's behavior. Online DPO partially addresses this by reintroducing rollouts, which operationally brings it closer to the RL loop described in this chapter.
   \item \textbf{Temporal credit assignment in detail.} With sparse end-of-sequence reward, credit assignment is a real challenge. Process reward models (Chapter~\ref{ch:reasoning-rl}) are one approach, but a full treatment of credit assignment is beyond our scope.
 \end{itemize}
 
@@ -588,7 +648,7 @@ This chapter gave you the vocabulary for Chapters~\ref{ch:rlhf} and~\ref{ch:reas
 \textbf{Quick Recap.}
 \begin{itemize}[nosep,leftmargin=1.5em]
   \item This chapter covered the policy-gradient family: REINFORCE $\to$ importance sampling $\to$ PPO-style clipped updates.
-  \item We omitted value-based methods, model-based RL, exploration theory, and multi-agent RL because they are not central to the post-training methods in Chapters~\ref{ch:rlhf} and~\ref{ch:reasoning-rl}.
+  \item We omitted value-based methods, model-based RL, exploration theory, multi-agent RL, offline RL in depth, and temporal credit assignment in detail because they are not central to the post-training methods in Chapters~\ref{ch:rlhf} and~\ref{ch:reasoning-rl}.
   \item Sutton \& Barto, CS 285, and Spinning Up are the recommended next steps for readers who want deeper RL knowledge.
 \end{itemize}
 \end{quickrecap}
@@ -604,15 +664,16 @@ This chapter gave you the vocabulary for Chapters~\ref{ch:rlhf} and~\ref{ch:reas
   \item An MDP formalizes sequential decision-making with states, actions, transitions, rewards, and a discount factor. The goal is to maximize expected return.
   \item Autoregressive text generation is a degenerate MDP: deterministic transitions, sparse end-of-sequence reward, known dynamics. Most of classical RL's complexity disappears.
   \item The REINFORCE estimator converts a reward signal into a policy gradient. It is unbiased but high-variance. Baselines (especially the value function) reduce variance by centering the reward signal.
-  \item PPO clips the importance sampling ratio to prevent large policy updates, achieving trust-region-like stability with simple first-order optimization.
-  \item The KL penalty to a reference policy prevents reward hacking, preserves capability, and maintains output diversity. It is the same objective that underlies DPO (Chapter~\ref{ch:preference-learning}).
+  \item PPO clips the importance sampling ratio \emph{per token} to prevent large policy updates, achieving trust-region-like stability with simple first-order optimization. The per-token clipping defuses the compounding-ratio problem that makes sequence-level importance sampling impractical for long responses.
+  \item The value model (critic) learns to predict expected return from any partial sequence. It is roughly policy-sized, making it a significant memory cost. GRPO (Chapter~\ref{ch:reasoning-rl}) eliminates it with a group-level baseline.
+  \item The KL penalty to a reference policy prevents reward hacking, preserves capability, and maintains output diversity. It is the same objective that underlies DPO (Chapter~\ref{ch:preference-learning}), but the $\beta$ values are not numerically comparable between DPO and PPO.
 \end{enumerate}
 \end{takeaways}
 
 
 \section*{Summary}
 
-\paragraph{What this chapter established.} Starting from the general MDP framework, we showed that autoregressive text generation is a degenerate special case---deterministic transitions, sparse reward, known dynamics---where the relevant RL toolkit is much narrower than in robotics or games. We developed the minimum viable toolkit: the REINFORCE gradient estimator for converting reward to parameter updates, importance sampling for off-policy correction, and PPO's clipping mechanism for stable training. We then introduced the KL constraint to a reference policy---the same constraint that appeared in Chapter~\ref{ch:preference-learning}'s DPO derivation---and explained why it is essential for preventing reward hacking.
+\paragraph{What this chapter established.} Starting from the general MDP framework, we showed that autoregressive text generation is a degenerate special case---deterministic transitions, sparse reward, known dynamics---where the relevant RL toolkit is much narrower than in robotics or games. We developed the minimum viable toolkit: the REINFORCE gradient estimator for converting reward to parameter updates, importance sampling for off-policy correction, PPO's per-token clipping mechanism for stable training, and the value model (critic) for advantage estimation. We then introduced the KL constraint to a reference policy---the same constraint that appeared in Chapter~\ref{ch:preference-learning}'s DPO derivation---and explained why it is essential for preventing reward hacking.
 
 \paragraph{The degenerate-MDP insight.} The central lesson of this chapter is that LLM RL is narrower than general RL. The formalism is inherited from a field that solves robotic control and game playing, but the application removes several sources of difficulty. Transitions are deterministic, so you do not need to learn a dynamics model. The environment is known, and sampling from the policy gives a direct way to explore candidate responses. The action space is large but discrete, so policy gradients apply directly to token probabilities. What remains is the core loop from the opening analogy: cook a dish (generate a response), get a score (reward), adjust your technique (policy gradient), and stay close to what you already know works (KL constraint). This is why PPO-style policy optimization has been the stable center of LLM RL since 2022, even as newer variants simplify or replace pieces of the PPO stack.
 

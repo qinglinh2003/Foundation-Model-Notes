@@ -40,9 +40,9 @@ An arrow from x passes through W to the addition node.
 
 BOTTOM PATH --- TRAINABLE LOW-RANK UPDATE:
 Two small rectangular blocks:
-- Block A: thin and wide, labeled "A", dimensions "r × d", pale blue
+- Matrix A panel: thin and wide, labeled "A", dimensions "r × d", pale blue
   fill (#E8F4FD), no lock icon
-- Block B: tall and thin, labeled "B", dimensions "d × r", primary
+- Matrix B panel: tall and thin, labeled "B", dimensions "d × r", primary
   blue fill (#2D8CFF), no lock icon
 Arrow from x through A, then through B, to a small scale badge.
 

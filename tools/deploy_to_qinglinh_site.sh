@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEPLOY_ROOT="${DEPLOY_ROOT:-/var/www/html/capstone}"
+DEPLOY_ROOT="${DEPLOY_ROOT:-/var/www/qinglinh.com/capstone}"
 
 cd "$PROJECT_ROOT"
 

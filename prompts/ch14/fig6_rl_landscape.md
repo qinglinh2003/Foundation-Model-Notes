@@ -2,7 +2,7 @@
 
 **Filename**: `fig_rl_landscape.png`
 **LaTeX label**: `fig:rl-landscape`
-**Caption**: The RL landscape: what this chapter covered versus what exists. The chapter focuses on policy-gradient methods because they are central to LLM post-training. Value-based, model-based, exploration-heavy, and multi-agent methods are important elsewhere but not the focus here.
+**Caption**: The RL landscape: what this chapter covered versus what exists. The chapter focuses on policy-gradient methods because they are central to LLM post-training. The muted branches show representative out-of-scope areas; offline RL and temporal credit assignment are noted in the text but are not expanded into a full taxonomy here.
 
 ## Prompt
 
@@ -15,7 +15,8 @@ path covered in this chapter.
 CONCEPT:
 Reinforcement learning is broad, but LLM post-training mostly uses the
 policy-gradient branch. The figure should show the broader landscape
-while clearly highlighting the narrow path this chapter covered.
+while clearly highlighting the narrow path this chapter covered. This is
+a scope map, not a complete taxonomy of every RL subfield.
 
 MAIN COMPOSITION:
 A branching roadmap from left to right. Start with a large root node
@@ -44,6 +45,13 @@ Use muted blue-gray cards, not orange:
 - Multi-agent: self-play, game dynamics; icon = two policy blocks
 Add small note under these branches: "important in RL, not central here"
 
+SIDE NOTE BADGES:
+Add two small muted side badges near the bottom edge, separate from the
+main branches:
+- "Offline RL: related to DPO, not expanded here"
+- "Temporal credit assignment: deferred to process rewards"
+These should be small annotations, not full branches.
+
 BOTTOM STRIP:
 A concise scope statement:
 "For LLM post-training: generate -> score -> policy-gradient update ->
@@ -70,10 +78,10 @@ IMPORTANT:
 
 - [ ] Root node: Reinforcement Learning
 - [ ] Four branches: policy gradients, value-based, model-based, multi-agent/exploration
+- [ ] Small side badges mention offline RL and temporal credit assignment
 - [ ] Orange highlighted path: REINFORCE -> IS -> TRPO -> PPO/GRPO-style variants
 - [ ] Other branches muted but visible
 - [ ] Bottom strip states LLM post-training loop
 - [ ] Does not dismiss non-policy-gradient RL
 - [ ] Blue-white style with single orange path
 - [ ] Readable at 50% width in PDF
-
