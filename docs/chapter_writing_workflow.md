@@ -111,7 +111,6 @@ Checklist:
 3. Make changes, re-compile, verify.
 4. Deploy to preview site.
 
----
 
 ## Phase 5: Figure Prompts
 

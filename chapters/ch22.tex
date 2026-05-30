@@ -144,7 +144,7 @@ The main taxonomy of this chapter is:
 \text{runtime improvement} \in \{\text{exposure},\ \text{orchestration},\ \text{delegation},\ \text{stabilization}\}.
 \]
 
-These categories are not meant to be metaphysical boundaries. Real systems often combine them. A coding agent may retrieve files (exposure), run tests (delegation), retry patches (orchestration), and sandbox edits (stabilization). The taxonomy is useful because each effect implies a different diagnostic.
+These categories classify improvement stories, not component names. The same component can serve different runtime effects depending on how it is used. A verifier used to select among candidates is orchestration; a verifier used to block unsafe outputs is stabilization. A validator used to guide retries is orchestration; a validator used to prevent an invalid action is stabilization. The taxonomy is useful because each effect implies a different diagnostic.
 
 \begin{figure}[t]
 \centering
@@ -152,6 +152,14 @@ These categories are not meant to be metaphysical boundaries. Real systems often
 \caption{\textbf{Four effects of runtime systems.} The question is not only whether the system score improved. It is which runtime effect explains the improvement and which diagnostic would make that explanation less plausible.}
 \label{fig:ch22-four-effects}
 \end{figure}
+
+\subsection{Efficiency as the Cross-Cutting Fifth Axis}
+
+Exposure, orchestration, delegation, and stabilization explain how runtime scaffolds change behavior. Efficiency explains whether that behavior can be delivered under realistic latency, memory, throughput, and cost constraints. Some system improvements do not raise answer quality at all. They hold quality fixed while reducing cost per success, lowering latency, fitting more requests into memory, or making a larger context window affordable.
+
+This is how Chapter~\ref{ch:serving-quantization-cost} fits into the Part~IV audit. Quantization, continuous batching, PagedAttention, speculative decoding, KV-cache optimization, and prefix caching are not always new reasoning mechanisms. They change what system behavior is affordable. A workflow that is too slow or expensive to run is not the same system once serving improvements make it practical.
+
+Every runtime effect should therefore be evaluated on the cost, latency, memory, and throughput axes. A better exposure system may retrieve more evidence, but the audit asks whether that evidence can be packed and served cheaply. A better orchestration system may try more candidates, but the audit asks whether the extra calls are worth the task value. A better delegation system may call tools, but the audit asks whether tool latency and failure handling fit the operating setting. Efficiency is not a replacement for the four effects; it is the constraint that determines whether they can be deployed.
 
 \subsection{Exposure: The System Shows the Model Missing Information}
 
@@ -203,7 +211,7 @@ The key question is:
 Did the system improve because it produced better actions, or because it blocked worse ones?
 \end{quote}
 
-Both are useful. A system that blocks unsafe database writes is better than one that executes them. But the score should reveal that stabilization happened. Otherwise a benchmark may report only final success while hiding unsafe attempts, over-refusals, blocked actions, or human escalations.
+Both are useful. A system that blocks unsafe database writes is better than one that executes them. A stabilizing system may lower raw task success by refusing unsafe or unsupported actions. That is not necessarily regression; it changes the objective from maximum completion to bounded completion. But the score should reveal that stabilization happened. Otherwise a benchmark may report only final success while hiding unsafe attempts, over-refusals, blocked actions, or human escalations.
 
 Useful stabilization metrics include blocked-action rate, unsafe-action attempt rate, false-positive guardrail rate, human escalation rate, recoverable versus unrecoverable failures, and safety-cost tradeoff curves.
 
@@ -214,6 +222,7 @@ Useful stabilization metrics include blocked-action rate, unsafe-action attempt 
   \item Orchestration improves systems by coordinating attempts, validators, retries, and workflow steps.
   \item Delegation improves systems by moving subproblems to external tools or environments.
   \item Stabilization improves systems by blocking, validating, bounding, or recovering from failures.
+  \item Efficiency determines whether these effects can be delivered under realistic cost, latency, memory, and throughput constraints.
 \end{itemize}
 \textit{Next: a system can succeed without proving that the base model itself became more capable.}
 \end{quickrecap}
@@ -343,7 +352,9 @@ Ablations show necessity. Oracles show headroom. Scaffolding curves show whether
 \text{cost per success} = \frac{\text{total runtime cost}}{\text{number of successful tasks}}.
 \]
 
-If a system doubles accuracy while increasing cost tenfold, it may still be useful for high-value tasks. But the improvement story must say that reliability was purchased with runtime spend. That is different from a system that improves both success and cost per success.
+If a system doubles accuracy while increasing cost tenfold, it may still be useful for high-value tasks. But the improvement story must say that reliability was purchased with runtime spend. Cost per success is not minimized in isolation. The right operating point depends on task value, failure cost, latency requirements, and the cost of human review. That is different from a system that improves both success and cost per success.
+
+Agent systems also require repeatability, not only a best trajectory. Sampling randomness, tool instability, web state changes, different retry paths, nondeterministic execution, and judge variance can make the same system succeed once and fail later. A system result should report variance across runs when repeated trials are feasible. For agent systems, repeatability is part of reliability.
 
 \subsection{Project 4 Report Template}
 
@@ -355,7 +366,7 @@ For your final Project~4 report, compare at least four variants:
   \item tool workflow;
   \item bounded agent loop.
 \end{enumerate}
-For each variant, report task success, cost per attempt, cost per success, latency, model calls, tool calls, retries, citation support, tool success, trace quality, safety incidents or blocked actions, and first broken failure layer. Do not only show the best demo. Explain which component made the system better and what it cost.
+For each variant, report task success, cost per attempt, cost per success, latency, model calls, tool calls, retries, citation support, tool success, trace quality, safety incidents or blocked actions, run-to-run variance, number of repeated trials per task, best-run versus average-run performance, failure consistency, and first broken failure layer. Do not only show the best demo. Explain which component made the system better and what it cost.
 \end{tcolorbox}
 
 \begin{quickrecap}
@@ -363,7 +374,8 @@ For each variant, report task success, cost per attempt, cost per success, laten
 \begin{itemize}[nosep,leftmargin=1.5em]
   \item The component attribution ladder compares controlled variants from base model to full production system.
   \item Ablations test necessity; oracles test headroom; scaffolding curves test how success scales with runtime budget.
-  \item Cost per success is often more informative than raw accuracy for model systems.
+  \item Cost per success is often more informative than raw accuracy for model systems, but the right operating point depends on task value and failure cost.
+  \item Agent results should report run-to-run variance when repeated trials are feasible.
 \end{itemize}
 \textit{Next: when a system fails, the same discipline localizes the first broken layer.}
 \end{quickrecap}
@@ -457,6 +469,12 @@ None of these require changing the model. The system score can rise because engi
 
 For example, a coding-agent scaffold might learn a SWE-bench-specific file-discovery rule: search for the issue's error string, open the first matching test, then edit the nearest implementation file. This can raise the benchmark score on repositories that follow that layout. If the same scaffold fails on projects with different test organization or issue phrasing, the gain was not a general improvement in code understanding. The model weights did not change; the runtime learned a narrow benchmark interface.
 
+\subsection{Benchmark Pressure Shapes Scaffolds}
+
+Benchmarks do not merely measure systems. They shape the runtime scaffolds people build. Static question-answering benchmarks reward single-answer correctness. RAG benchmarks reward evidence exposure, retrieval recall, and citation faithfulness. Web and tool benchmarks reward interaction reliability, state tracking, and recovery after tool failures. Coding benchmarks reward file discovery, executable validation, and patch iteration. Customer-service benchmarks such as \(\tau\)-bench reward repeatable policy following across tool calls, database state, and user interaction.
+
+As benchmarks change, scaffolds change with them. That is healthy when the benchmark pressure moves systems toward real deployment requirements. It becomes Goodhart when the scaffold learns the benchmark interface more than the task. The audit question is whether the design pressure produced a general capability pattern or a narrow route through the benchmark.
+
 \subsection{Real Progress Versus Scaffolding Artifact}
 
 \begin{center}
@@ -489,6 +507,7 @@ Responsible system reporting should include the details that let readers disting
   \item tool access, tool failure handling, and whether tools see hidden state;
   \item validation rules, test leakage risks, and judge prompts if applicable;
   \item ablation results for retrieval, tools, retries, validators, and guardrails;
+  \item repeated-trial statistics: variance across runs, best run versus average run, and failure consistency;
   \item performance under fresh tasks, perturbations, or changed interfaces.
 \end{itemize}
 
@@ -499,7 +518,7 @@ The goal is not to make every paper or project report enormous. The goal is to p
 \begin{itemize}[nosep,leftmargin=1.5em]
   \item Scaffold-level Goodhart occurs when the runtime scaffold overfits the benchmark while the model weights may not change.
   \item System scores can be inflated by benchmark-specific prompts, workflows, retries, tools, validators, or hidden costs.
-  \item Fresh tasks, perturbations, cost-per-success, and trace transparency help distinguish real progress from scaffold artifacts.
+  \item Fresh tasks, perturbations, repeatability, cost-per-success, and trace transparency help distinguish real progress from scaffold artifacts.
 \end{itemize}
 \textit{Next: the same audit questions define the open problems for model systems.}
 \end{quickrecap}
@@ -511,18 +530,35 @@ The goal is not to make every paper or project report enormous. The goal is to p
 
 Part~IV did not end with a solved engineering stack. It ended with a research agenda. The components now exist: inference-time compute, serving infrastructure, long context, retrieval, memory, tools, workflows, and agent loops. The frontier is knowing how to make them reliable, attributable, affordable, and transferable.
 
+\subsection{Why These Are Research Problems}
+
+These problems are not only product polish. They affect what claims the field can make.
+
+If component attribution is weak, a system score cannot tell us what improved. If cost-reliability tradeoffs are hidden, expensive scaffolds can look like capability progress. If context faithfulness is weak, RAG systems may produce supported-looking hallucinations. If trace reliability is weak, agent loops can look purposeful while drifting. If scaffolds do not generalize, benchmark progress will not predict deployment performance. If tool safety and oversight remain ad hoc, useful delegation will be limited by side-effect risk.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{0.20\textwidth}p{0.16\textwidth}p{0.27\textwidth}X@{}}
+\toprule
+\textbf{Open problem} & \textbf{Where it came from} & \textbf{Core question} & \textbf{What would count as progress?} \\
+\midrule
+Component attribution & Ch18--21 & Which component caused the gain? & Ablations and oracle tests explain most score changes. \\
+Cost-reliability frontier & Ch19 & Is higher success worth the runtime spend? & Cost per success and latency are reported with quality and task value. \\
+Context faithfulness & Ch20 & Did the answer use the cited evidence? & Claim-level support audits become routine. \\
+Trace reliability & Ch21 & Did the loop recover or drift? & Trace diagnostics localize the first broken layer. \\
+Scaffold generalization & Ch21--22 & Does the scaffold transfer beyond benchmark format? & Gains survive task perturbations, repeated runs, and fresh interfaces. \\
+Benchmark decay & Ch10/22 & Has the benchmark saturated, leaked, or been gamed? & Fresh hidden tasks and contamination audits exist. \\
+Tool safety & Ch21 & Can tools be used without unsafe side effects? & Sandbox, permission, injection, and escalation tests pass. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.96\textwidth]{figures/ch22/fig_open_problems_audit_targets.png}
 \caption{\textbf{Open problems as audit targets.} Each open problem pairs a system frontier with a diagnostic standard.}
 \label{fig:ch22-open-problems}
 \end{figure}
-
-\subsection{Why These Are Research Problems}
-
-These problems are not only product polish. They affect what claims the field can make.
-
-If component attribution is weak, a system score cannot tell us what improved. If cost-reliability tradeoffs are hidden, expensive scaffolds can look like capability progress. If context faithfulness is weak, RAG systems may produce supported-looking hallucinations. If trace reliability is weak, agent loops can look purposeful while drifting. If scaffolds do not generalize, benchmark progress will not predict deployment performance. If tool safety and oversight remain ad hoc, useful delegation will be limited by side-effect risk.
 
 \subsection{The Research Habit}
 
