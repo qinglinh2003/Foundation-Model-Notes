@@ -314,7 +314,7 @@ You will write \textbf{14 major reports before the final capstone}: 8 lab experi
 
 \textit{Core outcome:} You can pretrain, fine-tune, and align a language model end-to-end.
 
-\textit{Tasks:} Finalize reports. Self-assessment. Prepare for RL foundations.
+\textit{Tasks:} Finalize reports. Self-assessment. Prepare for model systems and agents.
 
 \textit{Checkpoint:} All Part~III deliverables complete.
 
@@ -323,196 +323,188 @@ You will write \textbf{14 major reports before the final capstone}: 8 lab experi
 %% ================================================================
 %% PART IV
 %% ================================================================
-\section*{Part IV: Evaluation, VLMs, Serving, Long Context, and Intervention \hfill Days 45--60}
+\section*{Part IV: Foundation Models as Systems and Agents \hfill Days 45--58}
 
 \medskip
-\noindent\textit{Experiment reports in this Part: 2 (quantization comparison, hallucination intervention).}
+\noindent\textit{Experiment reports in this Part: 1 (agentic model system evaluation).}
 
 \begin{description}[style=nextline, leftmargin=1.8cm, labelwidth=1.5cm]
 
-\item[Day 45--46] \textbf{Concept + Lab Days --- Evaluation Methodology (Ch.\,15)}
+\item[Day 45--46] \textbf{Concept + Lab Days --- Inference-Time Scaling and Decoding (Ch.\,18)}
 
-\textit{Core outcome:} You can design a rigorous evaluation plan with appropriate metrics, baselines, significance tests, and contamination checks.
+\textit{Core outcome:} You can compare decoding, best-of-$N$, self-consistency, verifier reranking, and search under a fixed compute budget.
 
-\textit{Tasks:} Read Ch.\,15. Design and execute an evaluation plan for one of your previous models. Report results with confidence intervals.
+\textit{Tasks:} Read Ch.\,18. Run multiple inference-time strategies on a small reasoning or QA set. Measure quality, variance, latency, and cost.
 
-\textit{Checkpoint:} Evaluation results with error bars.
+\textit{Checkpoint:} Inference-time scaling comparison table.
 
-\item[Day 47--48] \textbf{Concept + Lab Days --- ViT and CLIP (Ch.\,16)}
+\item[Day 47--48] \textbf{Concept + Lab Days --- Serving, Quantization, and Cost (Ch.\,19)}
 
-\textit{Core outcome:} You understand vision transformers, contrastive learning, and zero-shot vision-language alignment.
+\textit{Core outcome:} You understand prefill, decode, KV cache, batching, quantization, throughput, latency, and cost per task.
 
-\textit{Tasks:} Read Ch.\,16. Study \emph{Dosovitskiy et al.\ (ViT)} and \emph{Radford et al.\ (CLIP)}. Fine-tune ViT on image classification. Explore CLIP zero-shot. Implement CLIP-style contrastive loss on a toy dataset.
+\textit{Tasks:} Read Ch.\,19. Serve a small model with vLLM or SGLang. Compare precision or quantization settings and report throughput/latency/quality.
 
-\textit{Checkpoint:} ViT fine-tuning results + CLIP zero-shot demo + contrastive loss implementation.
+\textit{Checkpoint:} Serving benchmark with cost notes.
 
-\item[Day 49--50] \textbf{Concept + Lab Days --- VLM Architecture (Ch.\,17)}
+\item[Day 49--50] \textbf{Concept + Lab Days --- Long Context, Retrieval, and Memory (Ch.\,20)}
 
-\textit{Core outcome:} You understand BLIP-2, LLaVA, Q-Former, and visual instruction tuning, and can categorize VLM errors.
+\textit{Core outcome:} You can distinguish long context, RAG, context compression, and external memory, and diagnose retrieval failures.
 
-\textit{Tasks:} Read Ch.\,17. Run inference with a public VLM on diverse inputs. Design a 50-image evaluation and categorize errors.
+\textit{Tasks:} Read Ch.\,20. Build a simple RAG pipeline. Compare it against long-context prompting on the same task set.
 
-\textit{Checkpoint:} VLM error categorization table.
+\textit{Checkpoint:} RAG vs. long-context evaluation with failure taxonomy.
 
-\item[Day 51--52] \textbf{Concept + Lab Days --- Inference and Serving (Ch.\,18)}
+\item[Day 51--52] \textbf{Concept + Lab Days --- Tool Use, Workflows, and Agent Loops (Ch.\,21)}
 
-\textit{Core outcome:} You can serve a model with vLLM/SGLang and quantify the throughput/quality trade-off of quantization.
+\textit{Core outcome:} You can build a small tool-using workflow with state, retry logic, trace logging, and tool error recovery.
 
-\textit{Tasks:} Read Ch.\,18. Set up vLLM or SGLang. Measure throughput and latency. Compare FP16 vs.\ INT4: throughput, latency, output quality. Write Experiment Report.
+\textit{Tasks:} Read Ch.\,21. Implement a tool-augmented workflow and capture traces for successes and failures.
 
-\textit{Checkpoint:} Serving benchmark + quantization comparison + experiment report.
+\textit{Checkpoint:} Tool workflow with trace logs.
 
-\item[Day 53--54] \textbf{Concept + Lab Days --- Long Context and RAG (Ch.\,19)}
+\item[Day 53--54] \textbf{Concept + Lab Days --- Model System Frontiers (Ch.\,22)}
 
-\textit{Core outcome:} You can run needle-in-a-haystack experiments and compare RAG vs.\ long-context approaches.
+\textit{Core outcome:} You can evaluate a multi-step system by task success, trace quality, tool-call attribution, latency, reliability, and cost.
 
-\textit{Tasks:} Read Ch.\,19. Run needle-in-a-haystack at different positions. Build a simple RAG system. Compare RAG vs.\ long-context on QA.
+\textit{Tasks:} Read Ch.\,22. Build a small evaluator for your workflow traces and classify component-level failures.
 
-\textit{Checkpoint:} Needle-in-a-haystack heatmap + RAG vs.\ long-context comparison.
+\textit{Checkpoint:} System evaluation report draft.
 
-\item[Day 55--56] \textbf{Concept + Lab Days --- VLM Hallucination and Intervention (Ch.\,20)}
+\item[Day 55--58] $\bigstar$ \textbf{Integration Days --- Project 4: Agentic Model System}
 
-\textit{Core outcome:} You can evaluate hallucination, categorize failure types, and apply a simple intervention (activation patching or representation engineering).
+\textit{Core outcome:} You have compared a plain assistant, RAG assistant, tool workflow, and agent loop under the same evaluation harness.
 
-\textit{Tasks:} Read Ch.\,20. Evaluate a VLM on POPE/CHAIR. Categorize hallucination types. Implement a simple activation patching experiment. Write Experiment Report.
+\textit{Tasks:} Run Project~4. Measure success, latency, cost, trace quality, and failure attribution. Write the project report.
 
-\textit{Checkpoint:} Hallucination evaluation + intervention results + experiment report.
-
-\item[Day 57--59] $\bigstar$ \textbf{Integration Days --- Project 4: VLM Hallucination Benchmark}
-
-\textit{Core outcome:} You have designed and executed a VLM benchmark with baseline measurements, intervention, and trade-off analysis.
-
-\textit{Tasks:} Design benchmark: model(s), dataset, metrics, baseline, intervention. Run baseline $\rightarrow$ intervention $\rightarrow$ ablations. Analyze: does intervention reduce hallucination? At what cost? Write Project~4 report.
-
-\textit{Checkpoint:} Project~4 report with intervention results and trade-off analysis.
-
-\item[Day 60] $\triangleright$ \textbf{Buffer --- Part IV Review}
-
-\textit{Core outcome:} You can evaluate, serve, and diagnose LLM/VLM systems with appropriate metrics and deployment constraints.
-
-\textit{Tasks:} Finalize Project~4 report. Review Part~IV experiment reports. Consolidate notes for RL foundations.
-
-\textit{Checkpoint:} All Part~IV deliverables complete.
+\textit{Checkpoint:} Project~4 report.
 
 \end{description}
 
 %% ================================================================
 %% PART V
 %% ================================================================
-\section*{Part V: RL Foundations and Exploration \hfill Days 61--72}
+\section*{Part V: Multimodal Foundation Models and Grounded Reasoning \hfill Days 59--72}
 
 \medskip
-\noindent\textit{Experiment reports in this Part: 2 (algorithm comparison, exploration ablation).}
+\noindent\textit{Experiment reports in this Part: 1 (controlled VLM grounding benchmark).}
 
 \begin{description}[style=nextline, leftmargin=1.8cm, labelwidth=1.5cm]
 
-\item[Day 61--62] \textbf{Concept + Lab Days --- MDP and Dynamic Programming (Ch.\,21)}
+\item[Day 59--60] \textbf{Concept + Lab Days --- Visual Tokens and Visual Encoders (Ch.\,23)}
 
-\textit{Core outcome:} You can implement value/policy iteration on a gridworld and explain the curse of dimensionality.
+\textit{Core outcome:} You understand how images become visual tokens and why resolution, patch size, and token budget matter.
 
-\textit{Tasks:} Read Ch.\,21. Implement value iteration and policy iteration. Visualize value functions. Study how computation scales with state space.
+\textit{Tasks:} Read Ch.\,23. Implement patchification/token-budget calculations and inspect how visual evidence is compressed.
 
-\textit{Checkpoint:} Gridworld solver with value function visualization.
+\textit{Checkpoint:} Visual token budget analysis.
 
-\item[Day 63--64] \textbf{Concept + Lab Days --- Model-free RL: Q-learning to DQN (Ch.\,22)}
+\item[Day 61--62] \textbf{Concept + Lab Days --- Cross-Modal Alignment (Ch.\,24)}
 
-\textit{Core outcome:} You can explain Q-learning, experience replay, and target networks, and have a working DQN agent.
+\textit{Core outcome:} You can explain contrastive image-text alignment and why global embedding alignment is not local grounding.
 
-\textit{Tasks:} Read Ch.\,22. Study \emph{Mnih et al.\ 2015}. Implement tabular Q-learning, then DQN on CartPole. Plot Q-value convergence.
+\textit{Tasks:} Read Ch.\,24. Run a CLIP-style retrieval or zero-shot demo and categorize alignment failures.
 
-\textit{Checkpoint:} DQN agent solving CartPole with convergence plot.
+\textit{Checkpoint:} Cross-modal retrieval/error analysis.
 
-\item[Day 65--67] \textbf{Concept + Lab Days --- Policy Gradient, Actor-Critic, PPO (Ch.\,23)}
+\item[Day 63--64] \textbf{Concept + Lab Days --- The Visual-Language Interface (Ch.\,25)}
 
-\textit{Core outcome:} You can implement and compare REINFORCE, actor-critic, and PPO, and explain why PPO's clipped objective improves stability.
+\textit{Core outcome:} You can distinguish representation alignment from information routing into an LLM.
 
-\textit{Tasks:} Read Ch.\,23. Study \emph{Schulman et al.\ 2017}. Implement all three on the same environment. Compare training stability and sample efficiency. Write Experiment Report.
+\textit{Tasks:} Read Ch.\,25. Compare projector, Q-Former, cross-attention, visual prefix, and interleaved-token interfaces.
 
-\textit{Checkpoint:} 3-algorithm comparison plot + experiment report.
+\textit{Checkpoint:} Interface comparison diagram/table.
 
-\item[Day 68--69] \textbf{Concept + Lab Days --- Exploration (Ch.\,24)}
+\item[Day 65--66] \textbf{Concept + Lab Days --- Multimodal Data and Instruction Tuning (Ch.\,26)}
 
-\textit{Core outcome:} You can explain intrinsic motivation and implement RND on a sparse-reward task.
+\textit{Core outcome:} You can map data formats to the visual-language capabilities they teach.
 
-\textit{Tasks:} Read Ch.\,24. Study \emph{Pathak et al.\ (ICM)} and \emph{Burda et al.\ (RND)}. Implement RND bonus. Compare with/without intrinsic reward. Write Experiment Report.
+\textit{Tasks:} Read Ch.\,26. Build a small taxonomy of caption, VQA, instruction, referring, and grounding examples.
 
-\textit{Checkpoint:} Exploration ablation + experiment report.
+\textit{Checkpoint:} Multimodal data capability map.
 
-\item[Day 70--71] $\bigstar$ \textbf{Integration Days --- Project 5: Minimal RL Training Stack}
+\item[Day 67--69] \textbf{Concept + Lab Days --- Grounding, Binding, and Visual Reasoning (Ch.\,27)}
 
-\textit{Core outcome:} You have a clean, modular RL codebase with 2+ algorithms and standardized benchmarks.
+\textit{Core outcome:} You can diagnose perception, binding, spatial, and language-prior errors in controlled VLM examples.
 
-\textit{Tasks:} Design modular RL stack: environment wrapper, replay buffer, agent interface, training loop, logging. Integrate PPO + DQN. Run comparative benchmarks on 2--3 environments. Write Project~5 report.
+\textit{Tasks:} Read Ch.\,27. Construct controlled examples with target/distractor objects, attributes, counts, and spatial relations.
 
-\textit{Checkpoint:} Project~5 report with benchmark results.
+\textit{Checkpoint:} Controlled grounding examples with error taxonomy.
 
-\item[Day 72] $\triangleright$ \textbf{Buffer --- Part V Review}
+\item[Day 70--72] $\bigstar$ \textbf{Integration Days --- Project 5: Controlled VLM Grounding Benchmark}
 
-\textit{Core outcome:} Solid foundation in RL from tabular to deep policy optimization.
+\textit{Core outcome:} You have built a benchmark that tests visual grounding rather than generic hallucination.
 
-\textit{Tasks:} Review experiment reports. Self-assessment on RL concepts. Prepare for world models.
+\textit{Tasks:} Run Project~5. Evaluate one or more VLMs, classify errors, and test at least one simple repair such as crop verification or candidate reranking.
 
-\textit{Checkpoint:} All Part~V deliverables complete.
+\textit{Checkpoint:} Project~5 report.
 
 \end{description}
 
 %% ================================================================
 %% PART VI
 %% ================================================================
-\section*{Part VI: World Models and Model-Based Agents \hfill Days 73--84}
+\section*{Part VI: World Modeling, Prediction, and Planning \hfill Days 73--84}
 
 \medskip
-\noindent\textit{Experiment reports in this Part: 2 (model error analysis, world model agent evaluation).}
+\noindent\textit{Experiment reports in this Part: 1 (toy predictive agent).}
 
 \begin{description}[style=nextline, leftmargin=1.8cm, labelwidth=1.5cm]
 
-\item[Day 73--74] \textbf{Concept + Lab Days --- Model-based RL (Ch.\,25)}
+\item[Day 73] \textbf{Concept + Lab Days --- Why World Models? (Ch.\,28)}
 
-\textit{Core outcome:} You can implement Dyna-Q and explain when learned models help vs.\ hurt.
+\textit{Core outcome:} You understand the move from reactive models to predictive models, and the minimal prediction-and-control vocabulary needed for the Part.
 
-\textit{Tasks:} Read Ch.\,25. Implement Dyna-Q. Measure effect of model error by training with intentionally noisy model. Write Experiment Report.
+\textit{Tasks:} Read Ch.\,28. Define state, observation, action, reward, transition, policy, value, and model for a toy environment.
 
-\textit{Checkpoint:} Model error analysis + experiment report.
+\textit{Checkpoint:} Environment formalization note.
 
-\item[Day 75--76] \textbf{Concept + Lab Days --- Latent Dynamics Models (Ch.\,26)}
+\item[Day 74--75] \textbf{Concept + Lab Days --- Predictive Representations (Ch.\,29)}
 
-\textit{Core outcome:} You can train a latent dynamics model and diagnose posterior collapse via KL balancing.
+\textit{Core outcome:} You can compare token-, pixel-, and latent-level prediction targets and explain what each objective teaches.
 
-\textit{Tasks:} Read Ch.\,26. Implement encoder $\rightarrow$ recurrent latent state $\rightarrow$ decoder. Experiment with KL weight scheduling. Visualize latent space.
+\textit{Tasks:} Read Ch.\,29. Compare reconstruction-style and latent-prediction-style objectives on a toy sequence or image dataset.
 
-\textit{Checkpoint:} Latent dynamics model with reconstruction loss curve + KL balancing experiment.
+\textit{Checkpoint:} Prediction objective comparison.
 
-\item[Day 77--79] \textbf{Concept + Lab Days --- Dreamer and Modern World Models (Ch.\,27)}
+\item[Day 76--77] \textbf{Concept + Lab Days --- Latent Dynamics and Action-Conditioned World Models (Ch.\,30)}
 
-\textit{Core outcome:} You understand Dreamer, IRIS, DIAMOND, and TD-MPC2 architectures, and can identify failure modes of world models.
+\textit{Core outcome:} You can train and diagnose a learned transition model with one-step and multi-step rollout error.
 
-\textit{Tasks:} Read Ch.\,27. Study the Dreamer codebase. Implement simplified imagination-based planning. Compare to model-free baseline. Analyze failure cases (hallucinated rewards, latent collapse).
+\textit{Tasks:} Read Ch.\,30. Train a small action-conditioned transition model and compare one-step versus rollout error.
 
-\textit{Checkpoint:} Imagination-based agent with comparison to model-free baseline.
+\textit{Checkpoint:} Latent dynamics error analysis.
 
-\item[Day 80--81] \textbf{Concept Days --- Predictive Representations and VLM Agents (Ch.\,28)}
+\item[Day 78--79] \textbf{Concept + Lab Days --- Planning with Learned Models (Ch.\,31)}
 
-\textit{Core outcome:} You can connect world models to VLM grounding and have selected a capstone direction.
+\textit{Core outcome:} You can explain imagination rollout, MPC, tree search, verifier-guided planning, and compounding model error.
 
-\textit{Tasks:} Read Ch.\,28. Study JEPA, V-JEPA. Map connections: world model $\rightarrow$ action planning $\rightarrow$ VLM grounding. \textbf{Choose capstone direction (A--F).}
+\textit{Tasks:} Read Ch.\,31. Compare reactive action selection and imagined-rollout planning in a toy environment.
 
-\textit{Checkpoint:} Concept map + capstone direction selected.
+\textit{Checkpoint:} Planning comparison with failure cases.
 
-\item[Day 82--83] $\bigstar$ \textbf{Integration Days --- Project 6: Toy World Model Agent}
+\item[Day 80] \textbf{Concept Days --- World Models for Multimodal and Agentic Systems (Ch.\,32)}
 
-\textit{Core outcome:} You have a working model-based agent with planning and can compare it to model-free baselines.
+\textit{Core outcome:} You can analyze agents by state observability and transition structure rather than by modality alone.
 
-\textit{Tasks:} Build latent model + planning + acting loop on a visual RL environment. Train world model. Tune imagination horizon. Compare to PPO baseline. Write Experiment Report + Project~6 report.
+\textit{Tasks:} Read Ch.\,32. Map text, GUI, VLM, and embodied agents by observation, hidden state, action, transition, and uncertainty.
 
-\textit{Checkpoint:} Project~6 report with performance comparison + experiment report.
+\textit{Checkpoint:} Agent observability/transition map.
 
-\item[Day 84] $\triangleright$ \textbf{Buffer --- Part VI Review and Capstone Proposal}
+\item[Day 81] \textbf{Concept Days --- Evaluating World Models (Ch.\,33)}
 
-\textit{Core outcome:} All Part~VI work complete; capstone proposal finalized.
+\textit{Core outcome:} You can evaluate world models by prediction usefulness and planning success, not only reconstruction loss.
 
-\textit{Tasks:} Finalize Project~6 report. Review Part~VI experiment reports. \textbf{Submit capstone proposal:} research question, method, baselines, evaluation plan, timeline for Days~85--90.
+\textit{Tasks:} Read Ch.\,33. Design metrics for one-step error, rollout error, counterfactual correctness, planning success, and model exploitation.
 
-\textit{Checkpoint:} Project~6 report + capstone proposal submitted.
+\textit{Checkpoint:} World-model evaluation plan.
+
+\item[Day 82--84] $\bigstar$ \textbf{Integration Days --- Project 6: Toy Predictive Agent}
+
+\textit{Core outcome:} You have compared a reactive policy, learned transition model, and imagined-rollout planner.
+
+\textit{Tasks:} Run Project~6. Report prediction error, planning success, model error cases, and OOD generalization. Submit capstone proposal.
+
+\textit{Checkpoint:} Project~6 report + capstone proposal.
 
 \end{description}
 

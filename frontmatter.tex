@@ -1,7 +1,7 @@
 \chapter*{Course Overview}
 \addcontentsline{toc}{chapter}{Course Overview}
 
-This 90-day curriculum is designed for students preparing to enter a Computer Science PhD program in AI, large language models, vision-language models, reinforcement learning, world models, and multimodal reasoning. The curriculum follows the historical development of modern foundation models while emphasizing engineering practice, experimental design, pretraining experience, reinforcement learning foundations, world model research, scalable inference, and research-oriented implementation.
+This 90-day curriculum is designed for students preparing to enter a Computer Science PhD program in AI, large language models, vision-language models, agentic systems, world models, and multimodal reasoning. The curriculum follows the historical development of modern foundation models while emphasizing engineering practice, experimental design, pretraining experience, post-training, model systems, grounded multimodal reasoning, prediction, planning, and research-oriented implementation.
 
 Each chapter is written as a self-contained unit that defines what to study, why it matters, how to implement it, where things go wrong, and what to write about. Students should expect to read papers, run experiments, maintain reproducible logs, and produce short research memos throughout the program.
 
@@ -20,16 +20,13 @@ By the end of this curriculum, the student should be able to:
     \item Understand the practical role of distributed training, memory sharding, parallelism, and throughput measurement.
     \item Fine-tune and preference-optimize 1B--3B models.
     \item Understand instruction tuning, DPO, RLHF, RLVR, GRPO, and verifiable reward.
-    \item Configure and diagnose core reinforcement learning algorithms from tabular methods to PPO.
-    \item Understand exploration, intrinsic reward, curiosity, RND, and information-gain-style methods.
-    \item Configure, train, and diagnose world models and model-based agents.
-    \item Understand Dreamer-style, JEPA-style, transformer-based, diffusion-based, and MPC-style world models.
-    \item Build retrieval systems and distinguish naive RAG from agentic retrieval.
-    \item Deploy models for scalable evaluation using inference engines such as vLLM or SGLang.
-    \item Design evaluations with clear metrics, baselines, statistical uncertainty, contamination checks, and human-evaluation protocols.
-    \item Understand long-context methods and their limitations.
-    \item Analyze VLM hallucination, grounding failures, and intervention methods.
-    \item Apply mechanistic intervention and representation engineering methods where appropriate.
+    \item Turn a post-trained assistant into a system with inference-time compute, serving constraints, retrieval, memory, tools, and trace-level evaluation.
+    \item Build retrieval systems and distinguish naive RAG, long-context prompting, memory, and agentic retrieval.
+    \item Deploy models with inference engines such as vLLM or SGLang while reasoning about latency, throughput, quantization, and cost.
+    \item Understand visual encoders, cross-modal alignment, visual-language interfaces, multimodal instruction data, grounding, binding, and visual reasoning.
+    \item Diagnose VLM failures as perception, binding, spatial, or language-prior errors rather than treating hallucination as a single category.
+    \item Understand predictive representations, latent dynamics, action-conditioned world models, model predictive control, planning, and compounding model error.
+    \item Evaluate systems and world models with clear metrics, baselines, statistical uncertainty, trace diagnostics, task success, cost, and limitations.
     \item Produce a capstone research report with baselines, ablations, error analysis, and limitations.
 \end{itemize}
 
@@ -39,10 +36,11 @@ By the end of this curriculum, the student should be able to:
 \begin{itemize}
     \item \textbf{Part I: Transformer Foundations and Tokenization} \hfill Days 1--12
     \item \textbf{Part II: Data, Pretraining, Distributed Training, and Scaling} \hfill Days 13--30
-    \item \textbf{Part III: Post-Training} \hfill Chapters 11--17
-    \item \textbf{Part IV: World Models and Model-Based Agents} \hfill Chapters 18--21
-    \item \textbf{Part V: Evaluation, VLMs, Serving, Long Context, and Intervention} \hfill Chapters 22--27
-    \item \textbf{Part VI: Research Capstone} \hfill Chapter 28
+    \item \textbf{Part III: Post-training, Preference Optimization, and Reasoning RL} \hfill Chapters 11--17
+    \item \textbf{Part IV: Foundation Models as Systems and Agents} \hfill Chapters 18--22
+    \item \textbf{Part V: Multimodal Foundation Models and Grounded Reasoning} \hfill Chapters 23--27
+    \item \textbf{Part VI: World Modeling, Prediction, and Planning} \hfill Chapters 28--33
+    \item \textbf{Part VII: Research Capstone} \hfill Chapter 34
 \end{itemize}
 
 \chapter*{Research Workflow}
@@ -85,9 +83,9 @@ The curriculum has three workload tiers. The \textbf{Core} tier is required for 
     \item \textbf{Weeks 1--2:} working mini-GPT implementation, tokenizer comparison, and reproducible training loop.
     \item \textbf{Weeks 3--4:} data pipeline, pretraining dry run, scaling-law analysis, and distributed-training notes.
     \item \textbf{Weeks 5--6:} SFT, PEFT, DPO or toy RLHF, and a first aligned-assistant evaluation report.
-    \item \textbf{Weeks 7--8:} evaluation methodology, one focused VLM/RAG/long-context experiment, serving setup only if needed, and a VLM benchmark report.
-    \item \textbf{Weeks 9--10:} RL foundations, PPO baseline, intrinsic-reward experiment, and RL failure analysis.
-    \item \textbf{Weeks 11--12:} latent dynamics model, model-based RL comparison, world-model report, capstone proposal, and capstone implementation freeze.
+    \item \textbf{Weeks 7--8:} inference-time scaling, serving constraints, long context, retrieval, tools, and an agentic system report.
+    \item \textbf{Weeks 9--10:} visual encoders, cross-modal alignment, visual-language interfaces, multimodal data, grounding, and a VLM grounding benchmark.
+    \item \textbf{Weeks 11--12:} predictive representations, latent dynamics, learned-model planning, world-model evaluation, capstone proposal, and capstone implementation freeze.
     \item \textbf{Week 13:} capstone ablations, final report, reproducibility package, and presentation.
 \end{itemize}
 
@@ -118,7 +116,7 @@ Every experiment report is \core{} because the course is meant to build research
     \item \textbf{Chapters 6--7:} Devlin et al.\ on BERT; Radford et al.\ on GPT-2; Brown et al.\ on GPT-3 and in-context learning; Min et al.\ and Xie et al.\ on in-context learning analysis.
     \item \textbf{Chapters 8--10:} Penedo et al.\ on RefinedWeb; Together AI on RedPajama; Dodge et al.\ on C4 documentation; Kaplan et al.\ and Hoffmann et al.\ on scaling laws; Rajbhandari et al.\ on ZeRO; PyTorch FSDP documentation; Narayanan et al.\ and Shoeybi et al.\ on large-model parallelism.
     \item \textbf{Chapters 11--14:} Wei et al.\ on instruction tuning; Ouyang et al.\ on InstructGPT; Hu et al.\ on LoRA; Dettmers et al.\ on QLoRA; Rafailov et al.\ on DPO; Schulman et al.\ on PPO; DeepSeek-AI and related reasoning-RL reports for RLVR and GRPO-style training.
-    \item \textbf{Chapters 15--20:} Liang et al.\ on HELM; Srivastava et al.\ on BIG-bench; Zheng et al.\ on MT-Bench and Chatbot Arena; Dosovitskiy et al.\ on ViT; Radford et al.\ on CLIP; Li et al.\ on BLIP-2; Liu et al.\ on LLaVA; Kwon et al.\ on vLLM; Su et al.\ on RoPE; Liu et al.\ on Lost in the Middle; Lewis et al.\ on RAG; POPE, MME, and CHAIR papers for VLM hallucination.
-    \item \textbf{Chapters 21--24:} Sutton and Barto for RL foundations; Mnih et al.\ on DQN; Schulman et al.\ on policy gradients, GAE, and PPO; Pathak et al.\ on curiosity; Burda et al.\ on RND; Ecoffet et al.\ on Go-Explore.
-    \item \textbf{Chapters 25--29:} Sutton on Dyna; Janner et al.\ on MBPO; Hafner et al.\ on Dreamer; Micheli et al.\ on IRIS; Alonso et al.\ on DIAMOND; Hansen et al.\ on TD-MPC2; LeCun on JEPA; recent VLM-agent papers should be selected by the instructor based on the capstone direction; Heilmeier's catechism; NeurIPS reproducibility checklist.
+    \item \textbf{Chapters 18--22:} Kwon et al.\ on vLLM; SGLang documentation; Su et al.\ on RoPE; Liu et al.\ on Lost in the Middle; Lewis et al.\ on RAG; recent agent-system and tool-use papers selected by the instructor.
+    \item \textbf{Chapters 23--27:} Dosovitskiy et al.\ on ViT; Radford et al.\ on CLIP; Li et al.\ on BLIP-2; Liu et al.\ on LLaVA; grounding, referring-expression, and visual-reasoning benchmarks selected by the instructor.
+    \item \textbf{Chapters 28--34:} LeCun on JEPA; V-JEPA papers; Ha and Schmidhuber on World Models; Hafner et al.\ on Dreamer; Micheli et al.\ on IRIS; Alonso et al.\ on DIAMOND; Hansen et al.\ on TD-MPC2; Heilmeier's catechism; NeurIPS reproducibility checklist.
 \end{itemize}

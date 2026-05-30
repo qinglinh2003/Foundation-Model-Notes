@@ -16,6 +16,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import fitz
 from pypdf import PdfReader, PdfWriter
 
 
@@ -91,6 +92,13 @@ def make_page_label_map(reader: PdfReader) -> dict[str, int]:
     return label_map
 
 
+def make_fitz_page_label_map(document: fitz.Document) -> dict[str, int]:
+    label_map: dict[str, int] = {}
+    for index in range(document.page_count):
+        label_map.setdefault(str(document[index].get_label()), index)
+    return label_map
+
+
 def numbered_output_name(order: int, title: str, anchor: str) -> str:
     prefix = f"{order:02d}"
     chapter_match = re.match(r"chapter\.([0-9A-Za-z]+)$", anchor)
@@ -119,12 +127,41 @@ def collect_entries(reader: PdfReader) -> list[TocEntry]:
     return entries
 
 
+def collect_entries_from_fitz(document: fitz.Document) -> list[TocEntry]:
+    label_map = make_fitz_page_label_map(document)
+    entries: list[TocEntry] = []
+    for order, (title, label, anchor) in enumerate(parse_toc_chapters(), start=1):
+        if label not in label_map:
+            print(f"Skipping {title!r}: page label {label!r} not found")
+            continue
+        entries.append(
+            TocEntry(
+                title=title,
+                label=label,
+                anchor=anchor,
+                page_index=label_map[label],
+                output_name=numbered_output_name(order, title, anchor),
+            )
+        )
+    entries.sort(key=lambda item: item.page_index)
+    return entries
+
+
 def write_pdf_range(reader: PdfReader, start: int, end_exclusive: int, path: Path) -> None:
     writer = PdfWriter()
     for page_index in range(start, end_exclusive):
         writer.add_page(reader.pages[page_index])
     with path.open("wb") as handle:
         writer.write(handle)
+
+
+def write_pdf_range_fitz(
+    document: fitz.Document, start: int, end_exclusive: int, path: Path
+) -> None:
+    output = fitz.open()
+    output.insert_pdf(document, from_page=start, to_page=end_exclusive - 1)
+    output.save(path, garbage=3, deflate=True)
+    output.close()
 
 
 def write_demo_page() -> None:
@@ -412,16 +449,17 @@ def export_pdfs() -> list[TocEntry]:
     cover_src = ROOT / "figures" / "cover" / "cover-landscape.png"
     if cover_src.exists():
         shutil.copy2(cover_src, DIST / "cover.png")
-    reader = PdfReader(str(MAIN_PDF))
-    entries = collect_entries(reader)
+    reader = fitz.open(MAIN_PDF)
+    entries = collect_entries_from_fitz(reader)
     for index, entry in enumerate(entries):
-        next_start = entries[index + 1].page_index if index + 1 < len(entries) else len(reader.pages)
-        write_pdf_range(reader, entry.page_index, next_start, CHAPTERS_DIR / entry.output_name)
+        next_start = entries[index + 1].page_index if index + 1 < len(entries) else reader.page_count
+        write_pdf_range_fitz(reader, entry.page_index, next_start, CHAPTERS_DIR / entry.output_name)
+    reader.close()
     return entries
 
 
 def write_index(entries: list[TocEntry]) -> None:
-    complete_chapters = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
+    complete_chapters = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22}
     complete_labs = {1, 2, 3, 4, 5}
     complete_projects = {1}
     front_titles = {"Course Overview", "Course Structure", "Study Schedule"}
@@ -429,9 +467,10 @@ def write_index(entries: list[TocEntry]) -> None:
         (range(1, 6), "Part I — Transformer Foundations"),
         (range(6, 11), "Part II — Engineering Pretraining at Scale"),
         (range(11, 18), "Part III — Post-Training"),
-        (range(18, 22), "Part IV — World Models and Model-Based Agents"),
-        (range(22, 28), "Part V — Evaluation, VLMs, Serving, Long Context, and Intervention"),
-        (range(28, 29), "Part VI — Research Capstone"),
+        (range(18, 23), "Part IV — Foundation Models as Systems and Agents"),
+        (range(23, 28), "Part V — Multimodal Foundation Models and Grounded Reasoning"),
+        (range(28, 34), "Part VI — World Modeling, Prediction, and Planning"),
+        (range(34, 35), "Part VII — Research Capstone"),
     ]
 
     def chapter_number(entry: TocEntry) -> int | None:
@@ -461,7 +500,8 @@ def write_index(entries: list[TocEntry]) -> None:
         )
 
     sidebar_parts: list[str] = []
-    total_pages = len(PdfReader(str(MAIN_PDF)).pages)
+    with fitz.open(MAIN_PDF) as document:
+        total_pages = document.page_count
     sidebar_parts.append(
         '<div class="section-label">Full Book</div>'
         f'<button class="item active" data-pdf="{html.escape(FULL_PDF_NAME)}">'

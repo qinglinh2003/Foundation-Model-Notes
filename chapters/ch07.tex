@@ -3,7 +3,7 @@
 
 A single GPU trains a single model. A thousand GPUs do not train a thousand models---they must cooperate on one. And cooperation, in distributed systems as in human organizations, is mostly about who holds what and who talks to whom.
 
-Chapter~\ref{ch:what-changes} ended with a verdict: a 7B model's training state needs roughly 140\,GB---more than any single GPU available today. Distributed training is not optional. But ``distributed training'' is not a single technique. It is a family of strategies, each answering a different question about what to split, what to replicate, and what price to pay in communication.
+Chapter~\ref{ch:what-changes} ended with a verdict: a 7B model's training state needs roughly 140\,GB---too large for consumer GPUs and common 80\,GB training cards, and tight even on the largest single-GPU systems once activations and framework overhead are included. Distributed training is therefore the normal path for serious 7B training runs. But ``distributed training'' is not a single technique. It is a family of strategies, each answering a different question about what to split, what to replicate, and what price to pay in communication.
 
 Think of it like moving a household across a city. You could rent one enormous truck (a single huge GPU---but none exists that is big enough). You could load identical copies of everything into four trucks and throw away three copies at the destination (DDP---wasteful on memory). Or you could divide your possessions across four trucks, each carrying different items, and coordinate carefully at the other end (FSDP/ZeRO). The strategies differ, but they all answer the same two questions: \emph{what goes in which truck?} and \emph{when do the trucks need to meet?}
 
@@ -16,7 +16,7 @@ This chapter formalizes those questions into one lens that unifies all distribut
 
 Every technique in this chapter---DDP, ZeRO, FSDP, tensor parallelism, pipeline parallelism, activation recomputation---is a specific answer to these two questions. The differences are not in what they compute (the math is the same single-GPU training loop from Chapter~\ref{ch:tokens-to-training}), but in \emph{where the state lives} and \emph{what flows between GPUs}. Once you internalize this lens, reading any distributed training paper or framework reduces to asking: what did they shard, and what communication did they add?
 
-\paragraph{Running example.} We continue the thought experiment from Chapter~\ref{ch:what-changes}: training a 7B-parameter model. In Chapter~\ref{ch:what-changes}, we showed that its training state requires $\sim$140\,GB---far beyond any single GPU. Now we ask: how do you distribute that state across 4 GPUs (your Project~2 budget), 8 GPUs (a single high-end node), or 1,024 GPUs (frontier scale)? At each section, we will trace the state and flow invariants for the 7B model, making the trade-offs concrete.
+\paragraph{Running example.} We continue the thought experiment from Chapter~\ref{ch:what-changes}: training a 7B-parameter model. In Chapter~\ref{ch:what-changes}, we showed that its training state requires $\sim$140\,GB---beyond common 80\,GB GPUs before we even leave room for activations, fragmentation, and runtime overhead. Now we ask: how do you distribute that state across 4 GPUs (your Project~2 budget), 8 GPUs (a single high-end node), or 1,024 GPUs (frontier scale)? At each section, we will trace the state and flow invariants for the 7B model, making the trade-offs concrete.
 
 
 \subsection*{Learning Objectives}
@@ -82,7 +82,7 @@ $\text{BW}_{\text{link}}$ & Interconnect bandwidth (bytes/second between two GPU
 
 \subsection{The Decision}
 
-Chapter~\ref{ch:what-changes} did the arithmetic: a 7B model in mixed-precision training requires roughly 14\,GB for parameters (bf16), 14\,GB for gradients (bf16), 56\,GB for Adam optimizer states (fp32), and tens of GB for activations---a total well exceeding 100\,GB. No single consumer or datacenter GPU holds this. The question is not \emph{whether} to distribute, but \emph{how}.
+Chapter~\ref{ch:what-changes} did the arithmetic: a 7B model in mixed-precision training requires roughly 14\,GB for parameters (bf16), 14\,GB for gradients (bf16), 56\,GB for Adam optimizer states (fp32), and tens of GB for activations---a total well exceeding 100\,GB. This already exceeds common 80\,GB datacenter GPUs; newer 140--288\,GB cards change the boundary, but leave little practical headroom for long contexts, larger batches, or overhead. The question for most real training setups is not \emph{whether} to distribute, but \emph{how}.
 
 The simplest response is to buy more identical GPUs and split the data across them (data parallelism). But this does not reduce per-GPU memory---every GPU still holds the full model. A subtler response is to split the \emph{state} itself: some GPUs hold some parameters, others hold different ones (model parallelism). The subtlest response is to split the optimizer and gradient state while keeping the model replicated for computation, then reassembling on demand (ZeRO/FSDP).
 
@@ -616,7 +616,7 @@ Checkpoint size & State integrity & Unexpected size change \\
 %----------------------------------------------------------------------
 \section{Summary}
 
-\paragraph{What this chapter established.} Chapter~\ref{ch:what-changes} showed that a 7B model's training state does not fit on one GPU. This chapter provided the engineering toolkit to solve that problem: data parallelism for throughput, ZeRO/FSDP for memory, tensor and pipeline parallelism for extreme scale, activation recomputation for activation memory, and distributed checkpointing for reliability.
+\paragraph{What this chapter established.} Chapter~\ref{ch:what-changes} showed that a 7B model's training state pushes past ordinary single-GPU training budgets and quickly runs out of headroom once activations, context length, and optimizer state are included. This chapter provided the engineering toolkit for that regime: data parallelism for throughput, ZeRO/FSDP for memory, tensor and pipeline parallelism for extreme scale, activation recomputation for activation memory, and distributed checkpointing for reliability.
 
 \paragraph{The state-flow lens.} Every technique is a trade-off between state placement (what each GPU stores) and communication flow (what crosses GPUs at each step). DDP stores everything but communicates gradients. FSDP stores shards but communicates parameters. TP stores layer fragments but communicates activations per layer. The bandwidth hierarchy determines which trade-off is viable at each scale.
 
