@@ -459,7 +459,7 @@ def export_pdfs() -> list[TocEntry]:
 
 
 def write_index(entries: list[TocEntry]) -> None:
-    complete_chapters = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22}
+    complete_chapters = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23}
     complete_labs = {1, 2, 3, 4, 5}
     complete_projects = {1}
     front_titles = {"Course Overview", "Course Structure", "Study Schedule"}
